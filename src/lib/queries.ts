@@ -169,8 +169,8 @@ export async function getCard(id: string): Promise<CardDetail | null> {
      where checklists.card_id = ? order by checklist_items.position`,
     [id],
   );
-  const attachments = await all<{ id: string; filename: string; mime_type: string; byte_size: number; created_at: string }>(
-    "select id, filename, mime_type, byte_size, created_at from attachments where card_id = ? order by created_at",
+  const attachments = await all<{ id: string; filename: string; mime_type: string; byte_size: number; created_at: string; is_cover: number }>(
+    "select id, filename, mime_type, byte_size, created_at, is_cover from attachments where card_id = ? order by created_at",
     [id],
   );
   const activity = await all<{ id: string; actor_name: string; kind: string; summary: string; created_at: string }>(
@@ -241,6 +241,7 @@ export async function getCard(id: string): Promise<CardDetail | null> {
       mimeType: file.mime_type,
       byteSize: Number(file.byte_size),
       createdAt: file.created_at,
+      isCover: Number(file.is_cover) === 1,
     })),
     activity: activity.map((event) => ({
       id: event.id,

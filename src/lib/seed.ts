@@ -48,22 +48,6 @@ const LUIS = "user-luis";
 
 const CARDS: SeedCard[] = [
   {
-    id: "card-template",
-    list: "Template",
-    customerName: "Work order template",
-    sharedMats: "Mats shared with another piece or work order. Write “None” when the mats are only for this piece.",
-    artDescription: "What the piece is. One card per piece. The board titles it Customer W.O.# Inv.# (n/m) size phone.",
-    artLocation: "Bin, drawer, or wall rack where the art is stored.",
-    artCondition: "Tears, cockling, old tape, previous hardware, or “Good”.",
-    connectedOrders: "Other work orders that have to ship or be picked up together.",
-    additionalContact: "Designer, gallery, or household contact besides the customer.",
-    checked: 0,
-    createdAt: "2026-10-01T15:00:00.000Z",
-    activity: [
-      { actor: "Avery Chen", userId: AVERY, kind: "created", summary: "Avery Chen pinned the work-order template.", at: "2026-10-01T15:00:00.000Z" },
-    ],
-  },
-  {
     id: "card-templates-copy",
     list: "Templates",
     customerName: "Fitting notes template",
@@ -723,7 +707,7 @@ const CARDS: SeedCard[] = [
 ];
 
 export async function seed(): Promise<void> {
-  if (LISTS.length !== 26) throw new Error(`Expected 26 lists, found ${LISTS.length}`);
+  if (LISTS.length !== 25) throw new Error(`Expected 25 lists, found ${LISTS.length}`);
   if (LABELS.length !== 50) throw new Error(`Expected 50 labels, found ${LABELS.length}`);
   if (CUSTOM_FIELDS.length !== 15) throw new Error(`Expected 15 custom fields, found ${CUSTOM_FIELDS.length}`);
 
@@ -901,13 +885,13 @@ export async function seed(): Promise<void> {
       }
       if (card.pdf && card.invoiceNumber) {
         await tx.run(
-          "insert into attachments (id, card_id, filename, mime_type, byte_size, storage_key, created_at) values (?, ?, ?, ?, ?, ?, ?)",
+          "insert into attachments (id, card_id, filename, mime_type, byte_size, storage_key, is_cover, created_at) values (?, ?, ?, ?, ?, ?, 0, ?)",
           [`${card.id}-pdf`, card.id, `${card.invoiceNumber}.pdf`, "application/pdf", fileSizes.get(`seed/${card.id}.pdf`) ?? 0, `seed/${card.id}.pdf`, card.createdAt],
         );
       }
       if (card.photoHue) {
         await tx.run(
-          "insert into attachments (id, card_id, filename, mime_type, byte_size, storage_key, created_at) values (?, ?, ?, ?, ?, ?, ?)",
+          "insert into attachments (id, card_id, filename, mime_type, byte_size, storage_key, is_cover, created_at) values (?, ?, ?, ?, ?, ?, 1, ?)",
           [`${card.id}-photo`, card.id, `art-${card.workOrderNumber}.svg`, "image/svg+xml", fileSizes.get(`seed/${card.id}.svg`) ?? 0, `seed/${card.id}.svg`, card.createdAt],
         );
       }

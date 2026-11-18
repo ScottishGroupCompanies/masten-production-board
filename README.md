@@ -29,7 +29,7 @@ npm run dev
 
 ## What the board contains
 
-Lists, labels, and custom fields are the live board export in `src/data/live-board.json`: 26 lists in shop order, 50 labels with their Trello colors, and 15 custom fields. DO (Quantity) is a number. The other fields use the board’s exact dropdown options. Per-material stock (In Stock, Not In Stock, Needs Human Check, Ordered, Here) stays on each material line and is separate from those dropdowns.
+Lists, labels, and custom fields are the live board export in `src/data/live-board.json`: 25 lists in shop order (the old Template column is not used), 50 labels with their Trello colors, and 15 custom fields. DO (Quantity) is a number. The other fields use the board’s exact dropdown options. Per-material stock (In Stock, Not In Stock, Needs Human Check, Ordered, Here) stays on each material line and is separate from those dropdowns.
 
 A card title is `Customer W.O.##### Inv.##### (n/m) size phone`. Frames and glazing default to **Needs Human Check** until someone sets a status. Any line still on Needs Human Check shows **Needs review** on the card.
 
@@ -154,6 +154,6 @@ SQLite (local file or Turso).
 
 ## Everyday use
 
-The board scrolls sideways across all 26 lists. Drag a card between columns or reorder it inside a column. Counts in the headers are open cards. Archive from the card, and turn on Archived in the filter bar to put it back. Search matches customer, work order, and invoice. Filters cover label, assignee, due date, and material status.
+The board scrolls sideways across all 25 lists. Drag a card between columns or reorder it inside a column. Counts in the headers are open cards. Archive from the card, and turn on Archived in the filter bar to put it back. Search matches customer, work order, and invoice. Filters cover label, assignee, due date, and material status.
 
 **To order** groups every Not In Stock line by vendor. Mark ordered when it is placed, then Mark here when it arrives.

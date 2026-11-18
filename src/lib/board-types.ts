@@ -56,7 +56,7 @@ export type CardDetail = BoardCard & {
   fields: { id: string; name: string; value: string; options: string[] }[];
   notes: { id: string; authorName: string; body: string; createdAt: string }[];
   checklists: { id: string; title: string; items: { id: string; text: string; checked: boolean }[] }[];
-  attachments: { id: string; filename: string; mimeType: string; byteSize: number; createdAt: string }[];
+  attachments: { id: string; filename: string; mimeType: string; byteSize: number; createdAt: string; isCover: boolean }[];
   activity: { id: string; actorName: string; kind: string; summary: string; createdAt: string }[];
   siblings: { id: string; title: string; listName: string; pieceIndex: number | null }[];
   linkedOrders: { id: string; title: string; listName: string }[];

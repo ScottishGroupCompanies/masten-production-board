@@ -9,7 +9,6 @@ import liveBoard from "./live-board.json";
 export type ListKind = "utility" | "production" | "done";
 
 const UTILITY_LISTS = new Set([
-  "Template",
   "Text Messages",
   "Estimates/Quotes",
   "Master Customer List",

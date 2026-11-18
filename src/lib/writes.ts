@@ -503,12 +503,39 @@ export async function attachFile(cardId: string, file: { filename: string; mimeT
       await tx.run("update attachments set mime_type = ?, byte_size = ?, created_at = ? where id = ?", [file.mimeType, file.bytes.length, new Date().toISOString(), existing.id]);
       await activity(tx, cardId, actor, "attachment", `${actor.name} replaced ${filename}.`);
     } else {
+      const covers = await tx.all<{ id: string }>("select id from attachments where card_id = ? and is_cover = 1", [cardId]);
+      const isCover = file.mimeType.startsWith("image/") && covers.length === 0 ? 1 : 0;
       await tx.run(
-        "insert into attachments (id, card_id, filename, mime_type, byte_size, storage_key, created_at) values (?, ?, ?, ?, ?, ?, ?)",
-        [randomUUID(), cardId, filename, file.mimeType, file.bytes.length, storageKey, new Date().toISOString()],
+        "insert into attachments (id, card_id, filename, mime_type, byte_size, storage_key, is_cover, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
+        [randomUUID(), cardId, filename, file.mimeType, file.bytes.length, storageKey, isCover, new Date().toISOString()],
       );
       await activity(tx, cardId, actor, "attachment", `${actor.name} attached ${filename}.`);
     }
+  });
+}
+
+export async function renameAttachment(attachmentId: string, filename: string, actor: Actor) {
+  const next = safeFilename(filename);
+  if (!next) throw new CardError("File name is empty.");
+  await transaction(async (tx) => {
+    const file = await tx.all<{ card_id: string; filename: string }>("select card_id, filename from attachments where id = ?", [attachmentId]);
+    if (!file[0]) throw new CardError("Attachment not found.", 404);
+    await tx.run("update attachments set filename = ? where id = ?", [next, attachmentId]);
+    await activity(tx, file[0].card_id, actor, "attachment", `${actor.name} renamed ${file[0].filename} to ${next}.`);
+  });
+}
+
+export async function setCover(attachmentId: string, actor: Actor) {
+  await transaction(async (tx) => {
+    const file = await tx.all<{ card_id: string; filename: string; mime_type: string }>(
+      "select card_id, filename, mime_type from attachments where id = ?",
+      [attachmentId],
+    );
+    if (!file[0]) throw new CardError("Attachment not found.", 404);
+    if (!file[0].mime_type.startsWith("image/")) throw new CardError("Only a photo can be the cover.");
+    await tx.run("update attachments set is_cover = 0 where card_id = ?", [file[0].card_id]);
+    await tx.run("update attachments set is_cover = 1 where id = ?", [attachmentId]);
+    await activity(tx, file[0].card_id, actor, "attachment", `${actor.name} set ${file[0].filename} as the cover.`);
   });
 }
 

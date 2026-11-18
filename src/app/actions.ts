@@ -149,6 +149,16 @@ export async function uploadCardFile(cardId: string, formData: FormData) {
   );
 }
 
+export async function renameCardFile(cardId: string, attachmentId: string, filename: string) {
+  const user = await requireUser();
+  return run(cardId, () => writes.renameAttachment(attachmentId, filename, { name: user.name, userId: user.id }));
+}
+
+export async function makeCover(cardId: string, attachmentId: string) {
+  const user = await requireUser();
+  return run(cardId, () => writes.setCover(attachmentId, { name: user.name, userId: user.id }));
+}
+
 export async function removeCardFile(cardId: string, attachmentId: string) {
   const user = await requireUser();
   return run(cardId, () => writes.deleteAttachment(attachmentId, { name: user.name, userId: user.id }));
