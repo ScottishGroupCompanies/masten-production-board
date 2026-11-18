@@ -11,14 +11,17 @@ npm run dev
 
 Open http://127.0.0.1:4471.
 
-The first launch creates `data/masten.db` and about 27 fake cards (multi-piece orders, overdue jobs, and Not In Stock lines from Larson, Crescent, Bainbridge, Artique, and CDNV). Attachments land in `data/uploads`.
+Copy `.env.example` to `.env.local` and set `ADMIN_EMAIL` and `ADMIN_PASSWORD` before the first launch. Those two are required even locally. The first launch creates `data/masten.db` with the 25 lists, 50 labels, 15 custom fields, and that one admin user. It does not create cards. Attachments land in `data/uploads` until a Vercel Blob token is set.
 
-Sign in as the admin:
+Sign in with the email and password from `.env.local`.
 
-- Email: `avery.chen@masten.test`
-- Password: `FrameShop#1986`
+Optional shop-floor sample cards (not for the live database):
 
-Other staff use the same password: `jordan.hale@masten.test`, `priya.nandakumar@masten.test`, `luis.ortega@masten.test`.
+```bash
+npm run db:seed:demo
+```
+
+That adds demo staff `avery.chen@masten.test`, `jordan.hale@masten.test`, `priya.nandakumar@masten.test`, and `luis.ortega@masten.test`. They share `ADMIN_PASSWORD`. The command refuses to run against a remote database unless `ALLOW_DEMO_SEED=1`.
 
 Reset the local database (stop the dev server first, the file is open while it runs):
 
@@ -35,24 +38,63 @@ A card title is `Customer W.O.##### Inv.##### (n/m) size phone`. Frames and glaz
 
 ## Environment variables
 
-| Variable | Local default | Production |
+| Variable | Local | Production |
 | --- | --- | --- |
-| `DATABASE_URL` | `file:./data/masten.db` | Turso URL, `libsql://...` or `https://...` |
-| `TURSO_AUTH_TOKEN` | unused | Turso token |
-| `INTAKE_API_KEY` | `dev-masten-intake-key` | required, no default |
-| `SESSION_SECRET` | a dev-only string | long random secret |
-| `ADMIN_PASSWORD` | `FrameShop#1986` | password baked into the first seed |
-| `BLOB_READ_WRITE_TOKEN` | unused | Vercel Blob token for attachments |
+| `DATABASE_URL` | `file:./data/masten.db` if unset | Turso URL, `libsql://...` or `https://...`. Required |
+| `DATABASE_AUTH_TOKEN` | unused | Turso auth token. Required. `TURSO_AUTH_TOKEN` is accepted as an alias |
+| `BLOB_READ_WRITE_TOKEN` | optional; files stay in `data/uploads` | Vercel Blob read/write token. Required |
+| `INTAKE_API_KEY` | `dev-masten-intake-key` if unset | long random key. Required, no default |
+| `SESSION_SECRET` | a dev-only string if unset | random string, at least 32 characters. Required |
+| `ADMIN_EMAIL` | required, no default | shop admin login. Required |
+| `ADMIN_PASSWORD` | required, at least 8 characters | used only when that admin user is first created |
+| `ADMIN_NAME` | optional, default `Shop admin` | display name for the new admin |
 
-Copy `.env.example` to `.env.local` when you want to override the defaults. Do not ship the demo password or the dev API key.
+Copy `.env.example` to `.env.local` for local overrides. Do not commit `.env.local`.
 
 ## Deploy on Vercel
 
-1. Create a [Turso](https://turso.tech) database and a [Vercel Blob](https://vercel.com/docs/vercel-blob) store.
-2. Set `DATABASE_URL`, `TURSO_AUTH_TOKEN`, `BLOB_READ_WRITE_TOKEN`, `INTAKE_API_KEY`, `SESSION_SECRET`, and `ADMIN_PASSWORD`.
-3. Import the repo and deploy. The first boot seeds lists, labels, fields, the admin user, and the sample cards.
+The board starts empty. Migration creates the 25 lists, 50 labels, 15 custom fields, and the admin user. It does not insert cards, and running it again does not delete cards or change an existing admin password.
 
-SQLite on the local disk does not persist on Vercel. Turso is the same SQL. Attachments are written to `data/uploads` and, when the blob token is set, also to Vercel Blob. Reads prefer the local file and fall back to the blob.
+1. Create a Turso database and copy its URL and token:
+
+```bash
+turso db create masten-production
+turso db show masten-production --url
+turso db tokens create masten-production
+```
+
+2. In the Vercel project, create a Blob store. Connect it so Vercel sets `BLOB_READ_WRITE_TOKEN`.
+3. Set these environment variables for Production (and Preview, if you want preview to boot):
+
+```bash
+DATABASE_URL=libsql://your-database-name.turso.io
+DATABASE_AUTH_TOKEN=the-token-from-turso-db-tokens-create
+BLOB_READ_WRITE_TOKEN=the-vercel-blob-token
+INTAKE_API_KEY=a-long-random-key
+SESSION_SECRET=at-least-32-random-characters
+ADMIN_EMAIL=you@mastenonline.com
+ADMIN_PASSWORD=a-real-password
+```
+
+4. Import the repo and deploy. The server runs the same migration on boot.
+5. You can also migrate from a machine that has the production variables, before or after deploy. This is safe to repeat:
+
+```bash
+DATABASE_URL=libsql://your-database-name.turso.io \
+DATABASE_AUTH_TOKEN=... \
+BLOB_READ_WRITE_TOKEN=... \
+INTAKE_API_KEY=... \
+SESSION_SECRET=... \
+ADMIN_EMAIL=you@mastenonline.com \
+ADMIN_PASSWORD=... \
+npm run db:migrate
+```
+
+`npm run db:migrate` prints list, label, field, user, and card counts. A new production database should report `cards 0`.
+
+SQLite on the local disk does not persist on Vercel. Turso is the same SQL. In production, attachments are stored only in Vercel Blob. Locally, a file is written under `data/uploads`, and also to Blob when the token is set. Reads try the local file first, then Blob.
+
+Do not run `npm run db:seed:demo` against the production database.
 
 ## Intake API
 
@@ -69,7 +111,7 @@ curl -s -X POST http://127.0.0.1:4471/api/intake/orders \
   -H "Authorization: Bearer dev-masten-intake-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "workOrderNumber": "99001",
+    "workOrderNumber": "12345",
     "invoiceNumber": "21099",
     "customerName": "Sample Intake",
     "phone": "303-555-0199",
@@ -93,7 +135,7 @@ curl -s -X POST http://127.0.0.1:4471/api/intake/orders \
 ### Upload the order PDF
 
 ```bash
-curl -s -X POST http://127.0.0.1:4471/api/intake/orders/99001/attachments \
+curl -s -X POST http://127.0.0.1:4471/api/intake/orders/12345/attachments \
   -H "Authorization: Bearer dev-masten-intake-key" \
   -F "file=@./21099.pdf;type=application/pdf" \
   -F "filename=21099.pdf" \
@@ -105,17 +147,17 @@ Sending the same filename again replaces the file.
 ### Set stock, add a note, move the list
 
 ```bash
-curl -s -X PATCH http://127.0.0.1:4471/api/intake/orders/99001/materials \
+curl -s -X PATCH http://127.0.0.1:4471/api/intake/orders/12345/materials \
   -H "Authorization: Bearer dev-masten-intake-key" \
   -H "Content-Type: application/json" \
   -d '{"materials":[{"kind":"frame","itemCode":"LJ-8801","stockStatus":"ordered"}]}'
 
-curl -s -X POST http://127.0.0.1:4471/api/intake/orders/99001/notes \
+curl -s -X POST http://127.0.0.1:4471/api/intake/orders/12345/notes \
   -H "Authorization: Bearer dev-masten-intake-key" \
   -H "Content-Type: application/json" \
   -d '{"body":"Glass still needs a person to check the rack."}'
 
-curl -s -X POST http://127.0.0.1:4471/api/intake/orders/99001/move \
+curl -s -X POST http://127.0.0.1:4471/api/intake/orders/12345/move \
   -H "Authorization: Bearer dev-masten-intake-key" \
   -H "Content-Type: application/json" \
   -d '{"list":"Verify Mat Before Ordering"}'
@@ -124,7 +166,14 @@ curl -s -X POST http://127.0.0.1:4471/api/intake/orders/99001/move \
 ### Read it back
 
 ```bash
-curl -s http://127.0.0.1:4471/api/intake/orders/99001 \
+curl -s http://127.0.0.1:4471/api/intake/orders/12345 \
+  -H "Authorization: Bearer dev-masten-intake-key"
+```
+
+Delete every piece of a work order, including its files:
+
+```bash
+curl -s -X DELETE http://127.0.0.1:4471/api/intake/orders/12345 \
   -H "Authorization: Bearer dev-masten-intake-key"
 ```
 
@@ -134,14 +183,14 @@ Run the same flow against a live server:
 npm run test:intake
 ```
 
-That leaves sample work order **99001** on Verify Mat Before Ordering. Running it again updates the same card.
+The test uses a throwaway work order number and deletes that order before it exits. It does not leave a card on the board.
 
 ## Data model
 
 SQLite (local file or Turso).
 
 - `users` — staff. `role` is `admin` or `staff`.
-- `lists` — the 26 columns, in `position` order. `kind` is `production`, `done`, or `utility`. To Order only looks at open production cards.
+- `lists` — the 25 columns, in `position` order. `kind` is `production`, `done`, or `utility`. To Order only looks at open production cards.
 - `labels` — name and color.
 - `custom_fields` and `custom_field_options` — the 15 dropdowns.
 - `cards` — one row per piece. Unique on (`work_order_number`, `piece_index`) when a work order is set. Holds customer, phone, invoice, size, due date, start date, and the description sections: Shared Mats, Art Description, Art Location, Art Condition, Connected Orders, Additional Contact Info, and `customer_record_id`.

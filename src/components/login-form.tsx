@@ -5,7 +5,6 @@ import { login, type ActionResult } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { DEMO_ADMIN_EMAIL, DEMO_PASSWORD } from "@/lib/config";
 
 export function LoginForm() {
   const [state, action, pending] = useActionState(login, null as ActionResult | null);
@@ -35,7 +34,7 @@ export function LoginForm() {
           <div className="mt-6 space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" name="email" type="email" autoComplete="username" required className="min-h-10" defaultValue={DEMO_ADMIN_EMAIL} />
+              <Input id="email" name="email" type="email" autoComplete="username" required className="min-h-10" />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="password">Password</Label>
@@ -46,11 +45,6 @@ export function LoginForm() {
               {pending ? "Signing in…" : "Sign in"}
             </Button>
           </div>
-          <p className="mt-6 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
-            Demo admin {DEMO_ADMIN_EMAIL}
-            <br />
-            Password {DEMO_PASSWORD}
-          </p>
         </form>
       </section>
     </div>

@@ -11,12 +11,27 @@ function fullPath(storageKey: string): string {
   return resolved;
 }
 
+function blobToken(): string {
+  return process.env.BLOB_READ_WRITE_TOKEN?.trim() ?? "";
+}
+
+function requireBlobInProduction(): void {
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.NEXT_PHASE !== "phase-production-build" &&
+    !blobToken()
+  ) {
+    throw new Error("BLOB_READ_WRITE_TOKEN is required in production so attachments are stored in Vercel Blob.");
+  }
+}
+
 export async function saveUpload(storageKey: string, data: Buffer): Promise<void> {
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
+  requireBlobInProduction();
+  if (blobToken()) {
     const { put } = await import("@vercel/blob");
     await put(storageKey, data, {
       access: "public",
-      token: process.env.BLOB_READ_WRITE_TOKEN,
+      token: blobToken(),
       allowOverwrite: true,
     });
   }
@@ -25,17 +40,18 @@ export async function saveUpload(storageKey: string, data: Buffer): Promise<void
     await fs.mkdir(path.dirname(file), { recursive: true });
     await fs.writeFile(file, data);
   } catch (error) {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) throw error;
+    if (!blobToken()) throw error;
   }
 }
 
 export async function readUpload(storageKey: string): Promise<Buffer> {
+  requireBlobInProduction();
   try {
     return await fs.readFile(fullPath(storageKey));
   } catch (error) {
-    if (!process.env.BLOB_READ_WRITE_TOKEN) throw error;
+    if (!blobToken()) throw error;
     const { list } = await import("@vercel/blob");
-    const found = await list({ prefix: storageKey, token: process.env.BLOB_READ_WRITE_TOKEN });
+    const found = await list({ prefix: storageKey, token: blobToken() });
     const url = found.blobs.find((blob) => blob.pathname === storageKey)?.url;
     if (!url) throw error;
     const response = await fetch(url);
@@ -45,13 +61,15 @@ export async function readUpload(storageKey: string): Promise<Buffer> {
 }
 
 export async function removeUpload(storageKey: string): Promise<void> {
-  await fs.rm(fullPath(storageKey), { force: true });
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
+  const file = fullPath(storageKey);
+  await fs.rm(file, { force: true });
+  await fs.rmdir(path.dirname(file)).catch(() => undefined);
+  if (blobToken()) {
     try {
       const { del, list } = await import("@vercel/blob");
-      const found = await list({ prefix: storageKey, token: process.env.BLOB_READ_WRITE_TOKEN });
+      const found = await list({ prefix: storageKey, token: blobToken() });
       const url = found.blobs.find((blob) => blob.pathname === storageKey)?.url;
-      if (url) await del(url, { token: process.env.BLOB_READ_WRITE_TOKEN });
+      if (url) await del(url, { token: blobToken() });
     } catch {
       // Local copy is the source of truth when Blob is not configured for this key.
     }

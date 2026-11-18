@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { BOT_NAME } from "./config";
 import { CardError, type CardInput } from "./board-types";
+import { all, transaction } from "./db";
 import { getCard, piecesForWorkOrder } from "./queries";
+import { removeUpload } from "./storage";
 import { addNote, attachFile, createWorkCard, moveCard, setMaterialLines, updateWorkCard } from "./writes";
 
 const actor = { name: BOT_NAME, userId: null as string | null };
@@ -154,6 +156,34 @@ export async function upsertOrder(body: unknown) {
     }
   }
   return { workOrderNumber: data.workOrderNumber, results };
+}
+
+export async function deleteOrder(workOrder: string) {
+  const pieces = await piecesForWorkOrder(workOrder);
+  if (!pieces.length) throw new CardError(`No card for work order ${workOrder}.`, 404);
+  const files = await all<{ storage_key: string }>(
+    `select storage_key from attachments where card_id in (${pieces.map(() => "?").join(", ")})`,
+    pieces.map((piece) => piece.id),
+  );
+  await transaction(async (tx) => {
+    for (const piece of pieces) {
+      const checks = await tx.all<{ id: string }>("select id from checklists where card_id = ?", [piece.id]);
+      for (const check of checks) {
+        await tx.run("delete from checklist_items where checklist_id = ?", [check.id]);
+      }
+      await tx.run("delete from checklists where card_id = ?", [piece.id]);
+      await tx.run("delete from activity where card_id = ?", [piece.id]);
+      await tx.run("delete from notes where card_id = ?", [piece.id]);
+      await tx.run("delete from attachments where card_id = ?", [piece.id]);
+      await tx.run("delete from material_lines where card_id = ?", [piece.id]);
+      await tx.run("delete from card_field_values where card_id = ?", [piece.id]);
+      await tx.run("delete from card_labels where card_id = ?", [piece.id]);
+      await tx.run("delete from card_assignees where card_id = ?", [piece.id]);
+      await tx.run("delete from cards where id = ?", [piece.id]);
+    }
+  });
+  for (const file of files) await removeUpload(file.storage_key);
+  return { workOrderNumber: workOrder, deleted: pieces.map((piece) => piece.id) };
 }
 
 export async function readOrder(workOrder: string) {

@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { createClient, type Client, type InValue, type Transaction } from "@libsql/client";
-import { databaseUrl, isRemoteDatabase } from "./config";
+import { databaseAuthToken, databaseUrl, isRemoteDatabase } from "./config";
 
 export type SqlArg = string | number | null;
 type Row = Record<string, unknown>;
@@ -28,7 +28,11 @@ let ready: Promise<void> | null = null;
 function localPath(): string {
   const url = databaseUrl();
   const file = url.startsWith("file:") ? url.slice("file:".length) : url;
-  return path.isAbsolute(file) ? file : path.join(process.cwd(), file);
+  const name = path.basename(file);
+  if (!name || name === "." || name === "..") {
+    throw new Error("DATABASE_URL must name a database file inside data/.");
+  }
+  return path.join(process.cwd(), "data", name);
 }
 
 async function openLocal(): Promise<LocalDatabase> {
@@ -45,9 +49,13 @@ async function openLocal(): Promise<LocalDatabase> {
 
 function remoteClient(): Client {
   if (!remote) {
+    const authToken = databaseAuthToken();
+    if (!authToken) {
+      throw new Error("DATABASE_AUTH_TOKEN is required when DATABASE_URL is a Turso libsql:// or https:// URL.");
+    }
     remote = createClient({
       url: databaseUrl(),
-      authToken: process.env.TURSO_AUTH_TOKEN,
+      authToken,
     });
   }
   return remote;
