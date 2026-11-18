@@ -21,6 +21,10 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+// Pages read the database and the session. Skip build-time prerender so `next build`
+// does not need production credentials and does not migrate D1 during the build.
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${sans.variable} ${display.variable} h-full antialiased`} suppressHydrationWarning>

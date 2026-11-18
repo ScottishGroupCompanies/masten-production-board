@@ -40,6 +40,12 @@ export function sessionSecret(): string {
   return configured || DEV_SESSION_SECRET;
 }
 
+export type D1Config = {
+  accountId: string;
+  databaseId: string;
+  apiToken: string;
+};
+
 export function databaseUrl(): string {
   return process.env.DATABASE_URL?.trim() || "file:./data/masten.db";
 }
@@ -48,17 +54,43 @@ export function databaseAuthToken(): string {
   return process.env.DATABASE_AUTH_TOKEN?.trim() || process.env.TURSO_AUTH_TOKEN?.trim() || "";
 }
 
-export function isRemoteDatabase(url = databaseUrl()): boolean {
+export function d1Config(): D1Config | null {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? "";
+  const databaseId = process.env.CLOUDFLARE_D1_DATABASE_ID?.trim() ?? "";
+  const apiToken = process.env.CLOUDFLARE_D1_API_TOKEN?.trim() ?? "";
+  if (accountId && databaseId && apiToken) return { accountId, databaseId, apiToken };
+  if (accountId || databaseId || apiToken) {
+    throw new Error(
+      "CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_D1_DATABASE_ID, and CLOUDFLARE_D1_API_TOKEN must all be set to use Cloudflare D1.",
+    );
+  }
+  return null;
+}
+
+export function isD1Database(): boolean {
+  return d1Config() !== null;
+}
+
+export function isLibsqlDatabase(url = databaseUrl()): boolean {
+  if (isD1Database()) return false;
   return url.startsWith("libsql://") || url.startsWith("https://");
+}
+
+export function isRemoteDatabase(url = databaseUrl()): boolean {
+  return isD1Database() || isLibsqlDatabase(url);
 }
 
 export function assertProductionConfig(): void {
   if (process.env.NODE_ENV !== "production") return;
-  if (!isRemoteDatabase()) {
-    throw new Error("DATABASE_URL must be a Turso libsql:// or https:// URL in production.");
+  if (!isD1Database() && isLibsqlDatabase()) {
+    if (!databaseAuthToken()) {
+      throw new Error("DATABASE_AUTH_TOKEN is required when DATABASE_URL is a Turso libsql:// or https:// URL.");
+    }
   }
-  if (!databaseAuthToken()) {
-    throw new Error("DATABASE_AUTH_TOKEN is required in production.");
+  if (!isD1Database() && !isLibsqlDatabase()) {
+    throw new Error(
+      "Set CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_D1_DATABASE_ID, and CLOUDFLARE_D1_API_TOKEN for the production D1 database.",
+    );
   }
   if (!process.env.BLOB_READ_WRITE_TOKEN?.trim()) {
     throw new Error("BLOB_READ_WRITE_TOKEN is required in production so attachments go to Vercel Blob.");

@@ -139,9 +139,7 @@ async function writeChildren(
   }
 }
 
-async function ensureChecklist(tx: Tx, cardId: string) {
-  const existing = await tx.all<{ id: string }>("select id from checklists where card_id = ? limit 1", [cardId]);
-  if (existing[0]) return;
+async function queueChecklist(tx: Tx, cardId: string) {
   const checklistId = randomUUID();
   await tx.run("insert into checklists (id, card_id, title, position) values (?, ?, ?, 0)", [checklistId, cardId, PRODUCTION_CHECKLIST.title]);
   for (const [index, text] of PRODUCTION_CHECKLIST.items.entries()) {
@@ -155,15 +153,19 @@ async function ensureChecklist(tx: Tx, cardId: string) {
 }
 
 export async function createWorkCard(input: CardInput, actor: Actor) {
-  return transaction(async (tx) => {
-    const list = await resolveList(tx, input.listName, input.listId);
-    const workOrder = input.workOrderNumber?.trim() || null;
-    const pieceIndex = workOrder ? input.pieceIndex || 1 : null;
-    const pieceCount = workOrder ? input.pieceCount || 1 : null;
-    const id = randomUUID();
-    const now = new Date().toISOString();
-    const positionRow = await tx.all<{ position: number }>("select coalesce(max(position), -1000) as position from cards where list_id = ?", [list.id]);
-    try {
+  const workOrder = input.workOrderNumber?.trim() || null;
+  const pieceIndex = workOrder ? input.pieceIndex || 1 : null;
+  try {
+    return await transaction(async (tx) => {
+      const list = await resolveList(tx, input.listName, input.listId);
+      const pieceCount = workOrder ? input.pieceCount || 1 : null;
+      const id = randomUUID();
+      const now = new Date().toISOString();
+      const positionRow = await tx.all<{ position: number }>("select coalesce(max(position), -1000) as position from cards where list_id = ?", [list.id]);
+      const labels = await resolveLabels(tx, input.labelNames);
+      const assignees = await resolveAssignees(tx, input.assigneeEmails);
+      const fields = await resolveFields(tx, input.customFields);
+      const materials = normalizeMaterials(input.materials, input.ensureDefaults ?? Boolean(workOrder));
       await tx.run(
         `insert into cards (
           id, list_id, position, archived, customer_name, phone, work_order_number, invoice_number,
@@ -178,21 +180,15 @@ export async function createWorkCard(input: CardInput, actor: Actor) {
           input.additionalContact ?? "", input.customerRecordId || null, now, now,
         ],
       );
-    } catch (error) {
-      if (isUnique(error)) throw new CardError(`Work order ${workOrder} piece ${pieceIndex} already exists.`);
-      throw error;
-    }
-    await writeChildren(
-      tx, id,
-      await resolveLabels(tx, input.labelNames),
-      await resolveAssignees(tx, input.assigneeEmails),
-      await resolveFields(tx, input.customFields),
-      normalizeMaterials(input.materials, input.ensureDefaults ?? Boolean(workOrder)),
-    );
-    if (workOrder) await ensureChecklist(tx, id);
-    await activity(tx, id, actor, "created", `${actor.name} created this card in ${list.name}.`);
-    return { id, listName: list.name, pieceIndex };
-  });
+      await writeChildren(tx, id, labels, assignees, fields, materials);
+      if (workOrder) await queueChecklist(tx, id);
+      await activity(tx, id, actor, "created", `${actor.name} created this card in ${list.name}.`);
+      return { id, listName: list.name, pieceIndex };
+    });
+  } catch (error) {
+    if (isUnique(error)) throw new CardError(`Work order ${workOrder} piece ${pieceIndex} already exists.`);
+    throw error;
+  }
 }
 
 function shopDateDefault(value: string | null | undefined) {
@@ -200,34 +196,44 @@ function shopDateDefault(value: string | null | undefined) {
 }
 
 export async function updateWorkCard(id: string, input: CardInput, actor: Actor) {
-  return transaction(async (tx) => {
-    const current = await tx.all<{
-      list_id: string; list_name: string; customer_name: string; phone: string; work_order_number: string | null;
-      invoice_number: string | null; piece_index: number | null; piece_count: number | null; size: string;
-      due_date: string | null; start_date: string | null; shared_mats: string; art_description: string;
-      art_location: string; art_condition: string; connected_orders: string; additional_contact: string;
-      customer_record_id: string | null;
-    }>(
-      "select cards.*, lists.name as list_name from cards join lists on lists.id = cards.list_id where cards.id = ?",
-      [id],
-    );
-    const card = current[0];
-    if (!card) throw new CardError("Card not found.", 404);
-    let listId = card.list_id;
-    let listName = card.list_name;
-    if (input.forceList && (input.listName || input.listId)) {
-      const list = await resolveList(tx, input.listName, input.listId);
-      if (list.id !== card.list_id) {
-        listId = list.id;
-        listName = list.name;
-        await activity(tx, id, actor, "moved", `${actor.name} moved this from ${card.list_name} to ${list.name}.`);
+  let reportedOrder: string | null = null;
+  let reportedPiece: number | null = null;
+  try {
+    return await transaction(async (tx) => {
+      const current = await tx.all<{
+        list_id: string; list_name: string; customer_name: string; phone: string; work_order_number: string | null;
+        invoice_number: string | null; piece_index: number | null; piece_count: number | null; size: string;
+        due_date: string | null; start_date: string | null; shared_mats: string; art_description: string;
+        art_location: string; art_condition: string; connected_orders: string; additional_contact: string;
+        customer_record_id: string | null;
+      }>(
+        "select cards.*, lists.name as list_name from cards join lists on lists.id = cards.list_id where cards.id = ?",
+        [id],
+      );
+      const card = current[0];
+      if (!card) throw new CardError("Card not found.", 404);
+      let listId = card.list_id;
+      let listName = card.list_name;
+      let movedFrom: string | null = null;
+      if (input.forceList && (input.listName || input.listId)) {
+        const list = await resolveList(tx, input.listName, input.listId);
+        if (list.id !== card.list_id) {
+          listId = list.id;
+          listName = list.name;
+          movedFrom = card.list_name;
+        }
       }
-    }
-    const workOrder = input.workOrderNumber === undefined ? card.work_order_number : input.workOrderNumber?.trim() || null;
-    const pieceIndex = workOrder ? input.pieceIndex || card.piece_index || 1 : null;
-    const pieceCount = workOrder ? input.pieceCount || card.piece_count || 1 : null;
-    const dueDate = input.dueDate === undefined ? card.due_date : input.dueDate || null;
-    try {
+      const labels = await resolveLabels(tx, input.labelNames);
+      const assignees = await resolveAssignees(tx, input.assigneeEmails);
+      const fields = await resolveFields(tx, input.customFields);
+      const materials = input.replaceMaterials || input.materials ? normalizeMaterials(input.materials, false) : null;
+      const workOrder = input.workOrderNumber === undefined ? card.work_order_number : input.workOrderNumber?.trim() || null;
+      const pieceIndex = workOrder ? input.pieceIndex || card.piece_index || 1 : null;
+      const pieceCount = workOrder ? input.pieceCount || card.piece_count || 1 : null;
+      const dueDate = input.dueDate === undefined ? card.due_date : input.dueDate || null;
+      reportedOrder = workOrder;
+      reportedPiece = pieceIndex;
+      if (movedFrom) await activity(tx, id, actor, "moved", `${actor.name} moved this from ${movedFrom} to ${listName}.`);
       await tx.run(
         `update cards set list_id = ?, customer_name = ?, phone = ?, work_order_number = ?, invoice_number = ?,
          piece_index = ?, piece_count = ?, size = ?, due_date = ?, start_date = ?, shared_mats = ?, art_description = ?,
@@ -245,29 +251,23 @@ export async function updateWorkCard(id: string, input: CardInput, actor: Actor)
           new Date().toISOString(), id,
         ],
       );
-    } catch (error) {
-      if (isUnique(error)) throw new CardError(`Work order ${workOrder} piece ${pieceIndex} already exists.`);
-      throw error;
-    }
-    await writeChildren(
-      tx, id,
-      await resolveLabels(tx, input.labelNames),
-      await resolveAssignees(tx, input.assigneeEmails),
-      await resolveFields(tx, input.customFields),
-      input.replaceMaterials || input.materials ? normalizeMaterials(input.materials, false) : null,
-    );
-    const changes: string[] = [];
-    if (input.customerName.trim() !== card.customer_name) changes.push("customer");
-    if (dueDate !== card.due_date) changes.push("due date");
-    if ((input.size ?? card.size) !== card.size) changes.push("size");
-    if (input.artDescription !== undefined && input.artDescription !== card.art_description) changes.push("art description");
-    if (input.artLocation !== undefined && input.artLocation !== card.art_location) changes.push("art location");
-    if (input.materials) changes.push("materials");
-    if (input.labelNames) changes.push("labels");
-    if (input.customFields) changes.push("custom fields");
-    if (changes.length) await activity(tx, id, actor, "updated", `${actor.name} updated ${changes.join(", ")}.`);
-    return { listName, pieceIndex };
-  });
+      await writeChildren(tx, id, labels, assignees, fields, materials);
+      const changes: string[] = [];
+      if (input.customerName.trim() !== card.customer_name) changes.push("customer");
+      if (dueDate !== card.due_date) changes.push("due date");
+      if ((input.size ?? card.size) !== card.size) changes.push("size");
+      if (input.artDescription !== undefined && input.artDescription !== card.art_description) changes.push("art description");
+      if (input.artLocation !== undefined && input.artLocation !== card.art_location) changes.push("art location");
+      if (input.materials) changes.push("materials");
+      if (input.labelNames) changes.push("labels");
+      if (input.customFields) changes.push("custom fields");
+      if (changes.length) await activity(tx, id, actor, "updated", `${actor.name} updated ${changes.join(", ")}.`);
+      return { listName, pieceIndex };
+    });
+  } catch (error) {
+    if (isUnique(error)) throw new CardError(`Work order ${reportedOrder} piece ${reportedPiece} already exists.`);
+    throw error;
+  }
 }
 
 export async function moveCard(id: string, listName: string, actor: Actor) {
@@ -290,6 +290,7 @@ export async function moveCard(id: string, listName: string, actor: Actor) {
 
 export async function saveOrder(groups: { listId: string; cardIds: string[] }[], actor: Actor) {
   await transaction(async (tx) => {
+    const planned: { cardId: string; listId: string; position: number; fromName: string | null; toName: string }[] = [];
     for (const group of groups) {
       const nextList = await tx.all<{ name: string }>("select name from lists where id = ?", [group.listId]);
       if (!nextList[0]) throw new CardError("That list does not exist.", 404);
@@ -299,12 +300,21 @@ export async function saveOrder(groups: { listId: string; cardIds: string[] }[],
           [cardId],
         );
         if (!current[0]) continue;
-        await tx.run("update cards set list_id = ?, position = ?, updated_at = ? where id = ?", [
-          group.listId, index * 1000, new Date().toISOString(), cardId,
-        ]);
-        if (current[0].list_id !== group.listId) {
-          await activity(tx, cardId, actor, "moved", `${actor.name} moved this from ${current[0].name} to ${nextList[0].name}.`);
-        }
+        planned.push({
+          cardId,
+          listId: group.listId,
+          position: index * 1000,
+          fromName: current[0].list_id === group.listId ? null : current[0].name,
+          toName: nextList[0].name,
+        });
+      }
+    }
+    for (const item of planned) {
+      await tx.run("update cards set list_id = ?, position = ?, updated_at = ? where id = ?", [
+        item.listId, item.position, new Date().toISOString(), item.cardId,
+      ]);
+      if (item.fromName) {
+        await activity(tx, item.cardId, actor, "moved", `${actor.name} moved this from ${item.fromName} to ${item.toName}.`);
       }
     }
   });
@@ -339,6 +349,7 @@ export async function setMaterialLines(cardId: string, updates: { kind: string; 
   await transaction(async (tx) => {
     const card = await tx.all<{ id: string }>("select id from cards where id = ?", [cardId]);
     if (!card[0]) throw new CardError("Card not found.", 404);
+    const pending: { id: string; itemCode: string; vendor: string; kind: string; status: string; label: string }[] = [];
     for (const update of updates) {
       const kind = parseKind(update.kind);
       if (!kind) throw new CardError(`Unknown material kind "${update.kind}".`);
@@ -350,8 +361,24 @@ export async function setMaterialLines(cardId: string, updates: { kind: string; 
       );
       if (!lines[0]) throw new CardError(`No ${kindLabel(kind)} line with item code ${update.itemCode} on this card.`, 404);
       if (lines[0].stock_status === status) continue;
-      await tx.run("update material_lines set stock_status = ? where id = ?", [status, lines[0].id]);
-      await activity(tx, cardId, actor, "material_status", `${actor.name} set ${lines[0].item_code} (${kindLabel(kind)}${lines[0].vendor ? `, ${lines[0].vendor}` : ""}) to ${statusLabel(status)}.`);
+      pending.push({
+        id: lines[0].id,
+        itemCode: lines[0].item_code,
+        vendor: lines[0].vendor,
+        kind,
+        status,
+        label: statusLabel(status),
+      });
+    }
+    for (const line of pending) {
+      await tx.run("update material_lines set stock_status = ? where id = ?", [line.status, line.id]);
+      await activity(
+        tx,
+        cardId,
+        actor,
+        "material_status",
+        `${actor.name} set ${line.itemCode} (${kindLabel(line.kind)}${line.vendor ? `, ${line.vendor}` : ""}) to ${line.label}.`,
+      );
     }
     await tx.run("update cards set updated_at = ? where id = ?", [new Date().toISOString(), cardId]);
   });
@@ -461,15 +488,27 @@ export async function addCheckItem(cardId: string, text: string, actor: Actor) {
   const body = text.trim();
   if (!body) throw new CardError("Checklist item is empty.");
   await transaction(async (tx) => {
-    let checklist = await tx.all<{ id: string }>("select id from checklists where card_id = ? order by position limit 1", [cardId]);
-    if (!checklist[0]) {
-      await ensureChecklist(tx, cardId);
-      checklist = await tx.all<{ id: string }>("select id from checklists where card_id = ? order by position limit 1", [cardId]);
+    const checklist = await tx.all<{ id: string }>("select id from checklists where card_id = ? order by position limit 1", [cardId]);
+    if (checklist[0]) {
+      const position = await tx.all<{ position: number }>(
+        "select coalesce(max(position), -1) as position from checklist_items where checklist_id = ?",
+        [checklist[0].id],
+      );
+      await tx.run("insert into checklist_items (id, checklist_id, text, checked, position) values (?, ?, ?, 0, ?)", [
+        randomUUID(), checklist[0].id, body, Number(position[0]?.position ?? -1) + 1,
+      ]);
+    } else {
+      const checklistId = randomUUID();
+      await tx.run("insert into checklists (id, card_id, title, position) values (?, ?, ?, 0)", [checklistId, cardId, PRODUCTION_CHECKLIST.title]);
+      for (const [index, itemText] of PRODUCTION_CHECKLIST.items.entries()) {
+        await tx.run("insert into checklist_items (id, checklist_id, text, checked, position) values (?, ?, ?, 0, ?)", [
+          randomUUID(), checklistId, itemText, index,
+        ]);
+      }
+      await tx.run("insert into checklist_items (id, checklist_id, text, checked, position) values (?, ?, ?, 0, ?)", [
+        randomUUID(), checklistId, body, PRODUCTION_CHECKLIST.items.length,
+      ]);
     }
-    const position = await tx.all<{ position: number }>("select coalesce(max(position), -1) as position from checklist_items where checklist_id = ?", [checklist[0].id]);
-    await tx.run("insert into checklist_items (id, checklist_id, text, checked, position) values (?, ?, ?, 0, ?)", [
-      randomUUID(), checklist[0].id, body, Number(position[0]?.position ?? -1) + 1,
-    ]);
     await activity(tx, cardId, actor, "checklist", `${actor.name} added checklist item "${body}".`);
   });
 }

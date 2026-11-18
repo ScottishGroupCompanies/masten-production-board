@@ -1,10 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { createClient, type Client, type InValue, type Transaction } from "@libsql/client";
-import { databaseAuthToken, databaseUrl, isRemoteDatabase } from "./config";
+import { databaseAuthToken, databaseUrl, d1Config, isD1Database, isLibsqlDatabase } from "./config";
+import { createD1Client, splitSqlScript, type D1Client, type Row, type SqlArg, type Tx } from "./d1";
 
-export type SqlArg = string | number | null;
-type Row = Record<string, unknown>;
+export type { SqlArg, Tx };
 
 type Statement = {
   all(...args: SqlArg[]): Row[];
@@ -16,14 +16,15 @@ type LocalDatabase = {
   prepare(sql: string): Statement;
 };
 
-export type Tx = {
-  all<T extends Row = Row>(sql: string, args?: SqlArg[]): Promise<T[]>;
-  run(sql: string, args?: SqlArg[]): Promise<void>;
-};
-
 let remote: Client | null = null;
 let local: LocalDatabase | null = null;
+let d1: D1Client | null = null;
 let ready: Promise<void> | null = null;
+
+type OpenDatabase =
+  | { kind: "d1"; client: D1Client }
+  | { kind: "libsql"; client: Client }
+  | { kind: "sqlite"; sqlite: LocalDatabase };
 
 function localPath(): string {
   const url = databaseUrl();
@@ -61,10 +62,20 @@ function remoteClient(): Client {
   return remote;
 }
 
-async function database(): Promise<{ remote: Client | null; local: LocalDatabase | null }> {
-  if (isRemoteDatabase()) return { remote: remoteClient(), local: null };
+function d1Client(): D1Client {
+  if (!d1) {
+    const config = d1Config();
+    if (!config) throw new Error("Cloudflare D1 is not configured.");
+    d1 = createD1Client(config);
+  }
+  return d1;
+}
+
+async function database(): Promise<OpenDatabase> {
+  if (isD1Database()) return { kind: "d1", client: d1Client() };
+  if (isLibsqlDatabase()) return { kind: "libsql", client: remoteClient() };
   if (!local) local = await openLocal();
-  return { remote: null, local };
+  return { kind: "sqlite", sqlite: local };
 }
 
 function argsOf(args?: SqlArg[]): InValue[] {
@@ -77,11 +88,12 @@ function plainRows<T extends Row>(rows: T[]): T[] {
 
 export async function all<T extends Row = Row>(sql: string, args: SqlArg[] = []): Promise<T[]> {
   const db = await database();
-  if (db.remote) {
-    const result = await db.remote.execute({ sql, args: argsOf(args) });
+  if (db.kind === "d1") return db.client.all<T>(sql, args);
+  if (db.kind === "libsql") {
+    const result = await db.client.execute({ sql, args: argsOf(args) });
     return plainRows(result.rows as unknown as T[]);
   }
-  return plainRows(db.local!.prepare(sql).all(...args) as T[]);
+  return plainRows(db.sqlite.prepare(sql).all(...args) as T[]);
 }
 
 export async function get<T extends Row = Row>(sql: string, args: SqlArg[] = []): Promise<T | undefined> {
@@ -91,26 +103,35 @@ export async function get<T extends Row = Row>(sql: string, args: SqlArg[] = [])
 
 export async function run(sql: string, args: SqlArg[] = []): Promise<void> {
   const db = await database();
-  if (db.remote) {
-    await db.remote.execute({ sql, args: argsOf(args) });
+  if (db.kind === "d1") {
+    await db.client.run(sql, args);
     return;
   }
-  db.local!.prepare(sql).run(...args);
+  if (db.kind === "libsql") {
+    await db.client.execute({ sql, args: argsOf(args) });
+    return;
+  }
+  db.sqlite.prepare(sql).run(...args);
 }
 
 export async function execScript(sql: string): Promise<void> {
   const db = await database();
-  if (db.remote) {
-    await db.remote.executeMultiple(sql);
+  if (db.kind === "d1") {
+    await db.client.execScript(sql);
     return;
   }
-  db.local!.exec(sql);
+  if (db.kind === "libsql") {
+    await db.client.executeMultiple(sql);
+    return;
+  }
+  db.sqlite.exec(sql);
 }
 
 export async function transaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   const db = await database();
-  if (db.remote) {
-    const tx: Transaction = await db.remote.transaction("write");
+  if (db.kind === "d1") return db.client.transaction(fn);
+  if (db.kind === "libsql") {
+    const tx: Transaction = await db.client.transaction("write");
     const wrapped: Tx = {
       async all<T extends Row = Row>(sql: string, args: SqlArg[] = []) {
         const result = await tx.execute({ sql, args: argsOf(args) });
@@ -130,7 +151,7 @@ export async function transaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
     }
   }
 
-  const handle = db.local!;
+  const handle = db.sqlite;
   handle.exec("BEGIN");
   const wrapped: Tx = {
     async all<T extends Row = Row>(sql: string, args: SqlArg[] = []) {
@@ -284,6 +305,10 @@ CREATE INDEX IF NOT EXISTS materials_status ON material_lines(stock_status);
 CREATE INDEX IF NOT EXISTS activity_card ON activity(card_id, created_at);
 CREATE INDEX IF NOT EXISTS notes_card ON notes(card_id, created_at);
 `;
+
+export function migrationStatements(): string[] {
+  return splitSqlScript(SCHEMA);
+}
 
 export async function migrate(): Promise<void> {
   await execScript(SCHEMA);
