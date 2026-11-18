@@ -143,17 +143,29 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
               {card.fields.map((field) => (
                 <div key={field.id} className="space-y-1.5">
                   <Label>{field.name}</Label>
-                  <Select value={field.value || "none"} onValueChange={(value) => act(() => changeField(card.id, field.id, !value || value === "none" ? "" : value))}>
-                    <SelectTrigger className="w-full min-h-10">
-                      <SelectValue placeholder="Choose" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">—</SelectItem>
-                      {field.options.map((option) => (
-                        <SelectItem key={option} value={option}>{option}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {field.options.length === 0 ? (
+                    <Input
+                      type="number"
+                      min={0}
+                      defaultValue={field.value}
+                      className="min-h-10"
+                      onBlur={(event) => {
+                        if (event.target.value !== field.value) act(() => changeField(card.id, field.id, event.target.value));
+                      }}
+                    />
+                  ) : (
+                    <Select value={field.value || "none"} onValueChange={(value) => act(() => changeField(card.id, field.id, !value || value === "none" ? "" : value))}>
+                      <SelectTrigger className="w-full min-h-10">
+                        <SelectValue placeholder="Choose" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">—</SelectItem>
+                        {field.options.map((option) => (
+                          <SelectItem key={option} value={option}>{option}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </div>
               ))}
             </div>

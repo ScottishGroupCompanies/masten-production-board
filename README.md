@@ -29,9 +29,7 @@ npm run dev
 
 ## What the board contains
 
-The request named these lists, in this order: Template, New Work Orders, On Order Sheet, then the production columns, then Completed 🎊, Ready to be Archived, Text Messages, Estimates/Quotes, Master Customer List, Sales Leads, and Templates. There are 26 lists, 50 labels, and 15 custom-field dropdowns.
-
-The live Trello export was not in this workspace, and the connected Trello account cannot open the private board. The production lists between On Order Sheet and Completed, the label names, and the dropdown options are a working shop catalog in `src/data/board-schema.ts`. Replace that file and run `npm run db:reset` to load the real export. Card titles, the description sections, and the material stock statuses follow the request.
+Lists, labels, and custom fields are the live board export in `src/data/live-board.json`: 26 lists in shop order, 50 labels with their Trello colors, and 15 custom fields. DO (Quantity) is a number. The other fields use the board’s exact dropdown options. Per-material stock (In Stock, Not In Stock, Needs Human Check, Ordered, Here) stays on each material line and is separate from those dropdowns.
 
 A card title is `Customer W.O.##### Inv.##### (n/m) size phone`. Frames and glazing default to **Needs Human Check** until someone sets a status. Any line still on Needs Human Check shows **Needs review** on the card.
 
@@ -120,7 +118,7 @@ curl -s -X POST http://127.0.0.1:4471/api/intake/orders/99001/notes \
 curl -s -X POST http://127.0.0.1:4471/api/intake/orders/99001/move \
   -H "Authorization: Bearer dev-masten-intake-key" \
   -H "Content-Type: application/json" \
-  -d '{"list":"Materials to Check"}'
+  -d '{"list":"Verify Mat Before Ordering"}'
 ```
 
 ### Read it back
@@ -136,7 +134,7 @@ Run the same flow against a live server:
 npm run test:intake
 ```
 
-That leaves sample work order **99001** on Materials to Check. Running it again updates the same card.
+That leaves sample work order **99001** on Verify Mat Before Ordering. Running it again updates the same card.
 
 ## Data model
 

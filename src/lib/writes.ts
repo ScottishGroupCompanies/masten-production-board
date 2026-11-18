@@ -86,13 +86,16 @@ async function resolveFields(tx: Tx, values: Record<string, string> | undefined)
   for (const [name, label] of Object.entries(values)) {
     const fields = await tx.all<{ id: string }>("select id from custom_fields where name = ?", [name]);
     if (!fields[0]) throw new CardError(`Unknown custom field "${name}".`);
-    if (label) {
+    const definition = CUSTOM_FIELDS.find((field) => field.name === name);
+    if (definition?.type === "number") {
+      if (label && !/^\d+(\.\d+)?$/.test(label)) throw new CardError(`${name} must be a number.`);
+    } else if (label) {
       const option = await tx.all<{ label: string }>(
         "select label from custom_field_options where field_id = ? and label = ?",
         [fields[0].id, label],
       );
       if (!option[0]) {
-        const allowed = CUSTOM_FIELDS.find((field) => field.name === name)?.options ?? [];
+        const allowed = definition?.options ?? [];
         throw new CardError(`"${label}" is not an option for ${name}. Options: ${allowed.join(", ")}`);
       }
     }
@@ -398,7 +401,10 @@ export async function setField(cardId: string, fieldId: string, optionLabel: str
   await transaction(async (tx) => {
     const field = await tx.all<{ name: string }>("select name from custom_fields where id = ?", [fieldId]);
     if (!field[0]) throw new CardError("Unknown custom field.", 404);
-    if (optionLabel) {
+    const optionCount = await tx.all<{ n: number }>("select count(*) as n from custom_field_options where field_id = ?", [fieldId]);
+    if (Number(optionCount[0]?.n ?? 0) === 0) {
+      if (optionLabel && !/^\d+(\.\d+)?$/.test(optionLabel)) throw new CardError(`${field[0].name} must be a number.`);
+    } else if (optionLabel) {
       const option = await tx.all<{ label: string }>("select label from custom_field_options where field_id = ? and label = ?", [fieldId, optionLabel]);
       if (!option[0]) throw new CardError(`"${optionLabel}" is not an option for ${field[0].name}.`);
     }

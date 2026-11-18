@@ -90,10 +90,10 @@ async function main() {
   const moved = await request("/api/intake/orders/99001/move", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ list: "Materials to Check" }),
+    body: JSON.stringify({ list: "Verify Mat Before Ordering" }),
   });
-  if (!moved.moved[0].changed && moved.moved[0].to !== "Materials to Check") {
-    throw new Error("Move did not land on Materials to Check");
+  if (!moved.moved[0].changed && moved.moved[0].to !== "Verify Mat Before Ordering") {
+    throw new Error("Move did not land on Verify Mat Before Ordering");
   }
 
   const order = await request("/api/intake/orders/99001");
@@ -115,7 +115,7 @@ async function main() {
   const denied = await fetch(`${base}/api/intake/orders/99001`);
   if (denied.status !== 401) throw new Error(`Expected 401 without a key, got ${denied.status}`);
 
-  console.log("Intake sample passed for W.O.99001 on Materials to Check.");
+  console.log("Intake sample passed for W.O.99001 on Verify Mat Before Ordering.");
 }
 
 main().catch((error) => {
