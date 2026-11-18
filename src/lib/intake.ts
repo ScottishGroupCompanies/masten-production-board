@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { BOT_NAME } from "./config";
 import { CardError, type CardInput } from "./board-types";
+import { D1_MAX_BOUND_PARAMETERS } from "./d1";
 import { all, transaction } from "./db";
 import { getCard, piecesForWorkOrder } from "./queries";
 import { removeUpload } from "./storage";
@@ -161,16 +162,22 @@ export async function upsertOrder(body: unknown) {
 export async function deleteOrder(workOrder: string) {
   const pieces = await piecesForWorkOrder(workOrder);
   if (!pieces.length) throw new CardError(`No card for work order ${workOrder}.`, 404);
-  const files = await all<{ storage_key: string }>(
-    `select storage_key from attachments where card_id in (${pieces.map(() => "?").join(", ")})`,
-    pieces.map((piece) => piece.id),
-  );
+  const ids = pieces.map((piece) => piece.id);
+  const files: { storage_key: string }[] = [];
+  for (let index = 0; index < ids.length; index += D1_MAX_BOUND_PARAMETERS) {
+    const chunk = ids.slice(index, index + D1_MAX_BOUND_PARAMETERS);
+    const rows = await all<{ storage_key: string }>(
+      `select storage_key from attachments where card_id in (${chunk.map(() => "?").join(", ")})`,
+      chunk,
+    );
+    files.push(...rows);
+  }
   await transaction(async (tx) => {
     for (const piece of pieces) {
-      const checks = await tx.all<{ id: string }>("select id from checklists where card_id = ?", [piece.id]);
-      for (const check of checks) {
-        await tx.run("delete from checklist_items where checklist_id = ?", [check.id]);
-      }
+      await tx.run(
+        "delete from checklist_items where checklist_id in (select id from checklists where card_id = ?)",
+        [piece.id],
+      );
       await tx.run("delete from checklists where card_id = ?", [piece.id]);
       await tx.run("delete from activity where card_id = ?", [piece.id]);
       await tx.run("delete from notes where card_id = ?", [piece.id]);

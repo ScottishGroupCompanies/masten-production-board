@@ -762,6 +762,14 @@ export async function seedDemo(): Promise<{ inserted: number; skipped: boolean }
   }
 
   await transaction(async (tx) => {
+    const tops = await tx.all<{ list_id: string; max_position: number | null }>(
+      "select list_id, max(position) as max_position from cards group by list_id",
+    );
+    const positionInList = new Map<string, number>();
+    for (const row of tops) {
+      positionInList.set(row.list_id, Number(row.max_position ?? 0) + 1000);
+    }
+
     for (const user of users) {
       await tx.run(
         `insert into users (id, email, name, password_hash, role, created_at)
@@ -769,14 +777,6 @@ export async function seedDemo(): Promise<{ inserted: number; skipped: boolean }
          where not exists (select 1 from users where email = ? or id = ?)`,
         [user.id, user.email, user.name, passwordHash, user.role, now, user.email, user.id],
       );
-    }
-
-    const tops = await tx.all<{ list_id: string; max_position: number | null }>(
-      "select list_id, max(position) as max_position from cards group by list_id",
-    );
-    const positionInList = new Map<string, number>();
-    for (const row of tops) {
-      positionInList.set(row.list_id, Number(row.max_position ?? 0) + 1000);
     }
 
     for (const card of pending) {

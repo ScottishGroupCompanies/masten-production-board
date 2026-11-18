@@ -40,8 +40,11 @@ A card title is `Customer W.O.##### Inv.##### (n/m) size phone`. Frames and glaz
 
 | Variable | Local | Production |
 | --- | --- | --- |
-| `DATABASE_URL` | `file:./data/masten.db` if unset | Turso URL, `libsql://...` or `https://...`. Required |
-| `DATABASE_AUTH_TOKEN` | unused | Turso auth token. Required. `TURSO_AUTH_TOKEN` is accepted as an alias |
+| `CLOUDFLARE_ACCOUNT_ID` | unset | Cloudflare account id. Required with the two D1 variables below |
+| `CLOUDFLARE_D1_DATABASE_ID` | unset | D1 database UUID. Required |
+| `CLOUDFLARE_D1_API_TOKEN` | unset | API token with D1 Edit. Required. Sent as `Authorization: Bearer` |
+| `DATABASE_URL` | `file:./data/masten.db` if unset | Not required when the D1 variables are set. Optional Turso fallback: `libsql://...` or `https://...` |
+| `DATABASE_AUTH_TOKEN` | unused | Only for the Turso fallback. `TURSO_AUTH_TOKEN` is accepted as an alias |
 | `BLOB_READ_WRITE_TOKEN` | optional; files stay in `data/uploads` | Vercel Blob read/write token. Required |
 | `INTAKE_API_KEY` | `dev-masten-intake-key` if unset | long random key. Required, no default |
 | `SESSION_SECRET` | a dev-only string if unset | random string, at least 32 characters. Required |
@@ -55,20 +58,15 @@ Copy `.env.example` to `.env.local` for local overrides. Do not commit `.env.loc
 
 The board starts empty. Migration creates the 25 lists, 50 labels, 15 custom fields, and the admin user. It does not insert cards, and running it again does not delete cards or change an existing admin password.
 
-1. Create a Turso database and copy its URL and token:
+1. Create a Cloudflare D1 database (dashboard, or `npx wrangler d1 create masten-production`). Copy the account id and the database UUID.
+2. Create a Cloudflare API token with Account permission **D1 Edit**. A read-only token cannot create tables or write cards.
+3. In the Vercel project, create a Blob store. Connect it so Vercel sets `BLOB_READ_WRITE_TOKEN`.
+4. Set these environment variables for Production (and Preview, if you want preview to boot):
 
 ```bash
-turso db create masten-production
-turso db show masten-production --url
-turso db tokens create masten-production
-```
-
-2. In the Vercel project, create a Blob store. Connect it so Vercel sets `BLOB_READ_WRITE_TOKEN`.
-3. Set these environment variables for Production (and Preview, if you want preview to boot):
-
-```bash
-DATABASE_URL=libsql://your-database-name.turso.io
-DATABASE_AUTH_TOKEN=the-token-from-turso-db-tokens-create
+CLOUDFLARE_ACCOUNT_ID=your-account-id
+CLOUDFLARE_D1_DATABASE_ID=your-database-uuid
+CLOUDFLARE_D1_API_TOKEN=the-d1-edit-token
 BLOB_READ_WRITE_TOKEN=the-vercel-blob-token
 INTAKE_API_KEY=a-long-random-key
 SESSION_SECRET=at-least-32-random-characters
@@ -76,15 +74,15 @@ ADMIN_EMAIL=you@mastenonline.com
 ADMIN_PASSWORD=a-real-password
 ```
 
-4. Import the repo and deploy. The server runs the same migration on boot.
-5. You can also migrate from a machine that has the production variables, before or after deploy. This is safe to repeat:
+`DATABASE_URL` is not required when those three Cloudflare variables are set. The Node.js server calls the D1 HTTP API (`/query` for reads, `/raw` for writes). Statements that must commit together are sent as one `{ "batch": [...] }` request, because that API has no interactive transaction. If the D1 variables are unset, a Turso `DATABASE_URL` plus `DATABASE_AUTH_TOKEN` still works.
+
+5. Import the repo and deploy. The server runs the same migration on boot.
+6. You can also migrate from a machine that has the D1 variables, before or after deploy. This is safe to repeat and does not insert cards:
 
 ```bash
-DATABASE_URL=libsql://your-database-name.turso.io \
-DATABASE_AUTH_TOKEN=... \
-BLOB_READ_WRITE_TOKEN=... \
-INTAKE_API_KEY=... \
-SESSION_SECRET=... \
+CLOUDFLARE_ACCOUNT_ID=your-account-id \
+CLOUDFLARE_D1_DATABASE_ID=your-database-uuid \
+CLOUDFLARE_D1_API_TOKEN=the-d1-edit-token \
 ADMIN_EMAIL=you@mastenonline.com \
 ADMIN_PASSWORD=... \
 npm run db:migrate
@@ -92,7 +90,7 @@ npm run db:migrate
 
 `npm run db:migrate` prints list, label, field, user, and card counts. A new production database should report `cards 0`.
 
-SQLite on the local disk does not persist on Vercel. Turso is the same SQL. In production, attachments are stored only in Vercel Blob. Locally, a file is written under `data/uploads`, and also to Blob when the token is set. Reads try the local file first, then Blob.
+SQLite on the local disk does not persist on Vercel. D1 speaks the same SQL over HTTPS. In production, attachments are stored only in Vercel Blob. Locally, a file is written under `data/uploads`, and also to Blob when the token is set. Reads try the local file first, then Blob.
 
 Do not run `npm run db:seed:demo` against the production database.
 
@@ -187,7 +185,7 @@ The test uses a throwaway work order number and deletes that order before it exi
 
 ## Data model
 
-SQLite (local file or Turso).
+SQLite. Development uses a local file. Production uses Cloudflare D1. A Turso libSQL database is an optional fallback when the D1 variables are unset.
 
 - `users` — staff. `role` is `admin` or `staff`.
 - `lists` — the 25 columns, in `position` order. `kind` is `production`, `done`, or `utility`. To Order only looks at open production cards.

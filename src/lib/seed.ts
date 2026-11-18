@@ -14,6 +14,8 @@ export async function seedCatalog(): Promise<{ adminCreated: boolean }> {
   let adminCreated = false;
 
   await transaction(async (tx) => {
+    const existingAdmin = await tx.all<{ id: string }>("select id from users where email = ?", [admin.email]);
+
     for (const [index, list] of LISTS.entries()) {
       await tx.run(
         `insert into lists (id, name, position, kind) values (?, ?, ?, ?)
@@ -29,38 +31,49 @@ export async function seedCatalog(): Promise<{ adminCreated: boolean }> {
       );
     }
     for (const [index, field] of CUSTOM_FIELDS.entries()) {
-      const preferredId = slugId("field", field.name);
       await tx.run(
         `insert into custom_fields (id, name, position) values (?, ?, ?)
          on conflict(name) do update set position = excluded.position`,
-        [preferredId, field.name, index],
+        [slugId("field", field.name), field.name, index],
       );
-      const stored = await tx.all<{ id: string }>("select id from custom_fields where name = ?", [field.name]);
-      const fieldId = stored[0]?.id ?? preferredId;
       for (const [optionIndex, option] of field.options.entries()) {
-        const existing = await tx.all<{ id: string }>(
-          "select id from custom_field_options where field_id = ? and label = ?",
-          [fieldId, option],
-        );
-        if (existing[0]) {
-          await tx.run("update custom_field_options set position = ? where id = ?", [optionIndex, existing[0].id]);
-          continue;
-        }
-        const preferredOptionId = `${fieldId}-${optionIndex}`;
-        const taken = await tx.all<{ id: string }>("select id from custom_field_options where id = ?", [preferredOptionId]);
-        const optionId = taken[0] ? `${preferredOptionId}-${randomUUID().slice(0, 8)}` : preferredOptionId;
+        const suffix = randomUUID().slice(0, 8);
+        const optionKey = String(optionIndex);
         await tx.run(
-          "insert into custom_field_options (id, field_id, label, position) values (?, ?, ?, ?)",
-          [optionId, fieldId, option, optionIndex],
+          `update custom_field_options set position = ?
+           where label = ? and field_id = (select id from custom_fields where name = ?)`,
+          [optionIndex, option, field.name],
+        );
+        // Option ids stay `${stored field id}-${index}`. The index is bound as text so
+        // SQLite does not turn 0 into 0.0. A short suffix is used only when that id is taken.
+        await tx.run(
+          `insert into custom_field_options (id, field_id, label, position)
+           select
+             case
+               when exists (select 1 from custom_field_options where id = custom_fields.id || '-' || ?)
+               then custom_fields.id || '-' || ? || '-' || ?
+               else custom_fields.id || '-' || ?
+             end,
+             custom_fields.id,
+             ?,
+             ?
+           from custom_fields
+           where custom_fields.name = ?
+             and not exists (
+               select 1 from custom_field_options
+               where field_id = custom_fields.id and label = ?
+             )`,
+          [optionKey, optionKey, suffix, optionKey, option, optionIndex, field.name, option],
         );
       }
     }
 
-    const existingAdmin = await tx.all<{ id: string }>("select id from users where email = ?", [admin.email]);
     if (!existingAdmin[0]) {
       await tx.run(
-        "insert into users (id, email, name, password_hash, role, created_at) values (?, ?, ?, ?, ?, ?)",
-        [randomUUID(), admin.email, admin.name, hashSync(admin.password, 8), "admin", now],
+        `insert into users (id, email, name, password_hash, role, created_at)
+         select ?, ?, ?, ?, ?, ?
+         where not exists (select 1 from users where email = ?)`,
+        [randomUUID(), admin.email, admin.name, hashSync(admin.password, 8), "admin", now, admin.email],
       );
       adminCreated = true;
     }
