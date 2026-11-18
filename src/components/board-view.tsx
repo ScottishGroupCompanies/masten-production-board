@@ -351,7 +351,7 @@ function CardFace({
       <div className="mt-2 flex items-center justify-between gap-2">
         <div className="flex -space-x-1">
           {card.assignees.map((person) => (
-            <span key={person.id} title={person.name} className="grid size-6 place-items-center rounded-full border bg-[#1c2b26] text-[10px] font-semibold text-[#f4efe4]">
+            <span key={person.id} title={person.name} className="grid size-6 place-items-center rounded-full border border-zinc-300 bg-white text-[10px] font-semibold text-zinc-800">
               {initials(person.name)}
             </span>
           ))}

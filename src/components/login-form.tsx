@@ -12,20 +12,20 @@ export function LoginForm() {
 
   return (
     <div className="grid min-h-dvh lg:grid-cols-[1.1fr_0.9fr]">
-      <section className="hidden flex-col justify-between bg-[#1c2b26] p-10 text-[#f4efe4] lg:flex">
+      <section className="hidden flex-col justify-between border-r bg-[#f6f3ec] p-10 text-zinc-900 lg:flex">
         <div className="flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-md border border-[#f4efe4]/30">
-            <span className="size-4 border border-[#f4efe4] bg-[#c4a574]" />
+          <span className="grid size-10 place-items-center rounded-md border border-zinc-300 bg-white">
+            <span className="size-4 border border-zinc-700 bg-[#c4a574]" />
           </span>
           <span className="font-display text-2xl">Masten Fine Framing</span>
         </div>
         <div>
           <h1 className="font-display max-w-md text-5xl leading-tight">The floor board for every piece in the shop.</h1>
-          <p className="mt-4 max-w-md text-lg text-[#f4efe4]/75">
+          <p className="mt-4 max-w-md text-lg text-zinc-600">
             Work orders, mats, moulding, and pickup. Greenwood Village. One card per piece.
           </p>
         </div>
-        <p className="text-sm text-[#f4efe4]/50">2500 E Orchard Rd, Suite A</p>
+        <p className="text-sm text-zinc-500">2500 E Orchard Rd, Suite A</p>
       </section>
       <section className="flex items-center justify-center px-5 py-10">
         <form className="w-full max-w-sm" action={action}>

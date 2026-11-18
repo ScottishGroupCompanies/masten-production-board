@@ -64,7 +64,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
   const cover = card.attachments.find((file) => file.isCover && file.mimeType.startsWith("image/"));
 
   return (
-    <div className="h-full overflow-y-auto bg-[#14171b] text-zinc-100">
+    <div className="h-full overflow-y-auto bg-[#f6f3ec] text-zinc-900">
       <div className="relative flex h-52 items-start bg-[#e4e6e9]">
         <label className="absolute top-4 left-4 z-10">
           <span className="sr-only">Move to list</span>
@@ -75,7 +75,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
               const list = board.lists.find((item) => item.id === event.target.value);
               if (list && list.id !== card.listId) act(() => moveCardTo(card.id, list.name), `Moved to ${list.name}`);
             }}
-            className="max-w-[240px] appearance-none rounded-md bg-[#3c4148] px-3 py-1.5 pr-8 text-sm font-medium text-white shadow-sm"
+            className="max-w-[240px] appearance-none rounded-md border border-zinc-300 bg-white px-3 py-1.5 pr-8 text-sm font-medium text-zinc-900 shadow-sm"
           >
             {board.lists.map((list) => (
               <option key={list.id} value={list.id}>{list.name}</option>
@@ -98,7 +98,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         </div>
 
         <section>
-          <h2 className="mb-3 text-sm font-semibold tracking-wide text-zinc-400 uppercase">Client</h2>
+          <h2 className="mb-3 text-sm font-semibold tracking-wide text-zinc-500 uppercase">Client</h2>
           <form
             className="grid gap-3 sm:grid-cols-2"
             onSubmit={(event) => {
@@ -143,22 +143,22 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
             <DarkArea name="connectedOrders" label="Connected Orders" defaultValue={card.connectedOrders} />
             <DarkArea name="additionalContact" label="Additional Contact Info" defaultValue={card.additionalContact} />
             <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="customerRecord" className="text-zinc-300">Customer record</Label>
-              <select id="customerRecord" name="customerRecord" defaultValue={card.customerRecordId ?? ""} className="h-10 w-full rounded-md border border-zinc-600 bg-zinc-900 px-2 text-sm">
+              <Label htmlFor="customerRecord" className="text-zinc-700">Customer record</Label>
+              <select id="customerRecord" name="customerRecord" defaultValue={card.customerRecordId ?? ""} className="h-10 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm">
                 <option value="">No linked customer card</option>
                 {card.customerRecords.map((record) => (
                   <option key={record.id} value={record.id}>{record.name}</option>
                 ))}
               </select>
               {card.customerRecordId ? (
-                <Link href={`/cards/${card.customerRecordId}`} className="text-sm text-sky-300 underline">
+                <Link href={`/cards/${card.customerRecordId}`} className="text-sm text-sky-800 underline">
                   Open {card.customerRecordName} on the Master Customer List
                 </Link>
               ) : null}
             </div>
             <div className="flex gap-2 sm:col-span-2">
               <Button type="submit">Save client info</Button>
-              <Button type="button" variant="outline" className="border-zinc-600 bg-transparent text-zinc-100" onClick={() => act(() => archiveCard(card.id, !card.archived), card.archived ? "Restored" : "Archived")}>
+              <Button type="button" variant="outline" className="border-zinc-300 bg-white text-zinc-900" onClick={() => act(() => archiveCard(card.id, !card.archived), card.archived ? "Restored" : "Archived")}>
                 {card.archived ? "Unarchive" : "Archive"}
               </Button>
             </div>
@@ -167,19 +167,19 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
 
         <section id="custom-fields">
           <h2 className="mb-4 flex items-center gap-2 text-lg font-medium">
-            <span className="text-zinc-400">#</span> Custom Fields
+            <span className="text-zinc-500">#</span> Custom Fields
           </h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {card.fields.map((field) => (
               <div key={field.id} className="space-y-1.5">
-                <Label className="text-zinc-300">{field.name}</Label>
+                <Label className="text-zinc-700">{field.name}</Label>
                 {field.options.length === 0 ? (
                   <Input
                     type="number"
                     min={0}
                     defaultValue={field.value}
                     aria-label={field.name}
-                    className="h-10 border-zinc-600 bg-zinc-900 text-zinc-100"
+                    className="h-10 border-zinc-300 bg-white text-zinc-900"
                     onBlur={(event) => {
                       if (event.target.value !== field.value) act(() => changeField(card.id, field.id, event.target.value));
                     }}
@@ -205,7 +205,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         <section id="attachments">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-lg font-medium">
-              <Paperclip className="size-4 text-zinc-400" /> Attachments
+              <Paperclip className="size-4 text-zinc-500" /> Attachments
             </h2>
             <form action={async (formData) => {
               const result = await uploadCardFile(card.id, formData);
@@ -218,8 +218,8 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
               </label>
             </form>
           </div>
-          <ul className="divide-y divide-zinc-800 rounded-lg border border-zinc-800">
-            {card.attachments.length === 0 ? <li className="px-3 py-4 text-sm text-zinc-400">No files yet. The Lifesaver PDF is named with the invoice number.</li> : null}
+          <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200">
+            {card.attachments.length === 0 ? <li className="px-3 py-4 text-sm text-zinc-500">No files yet. The Lifesaver PDF is named with the invoice number.</li> : null}
             {card.attachments.map((file) => {
               const src = `/api/attachments/${file.id}`;
               const image = file.mimeType.startsWith("image/");
@@ -229,7 +229,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={src} alt="" className="size-12 rounded object-cover" />
                   ) : (
-                    <span className="grid size-12 place-items-center rounded bg-zinc-700 text-xs font-semibold">PDF</span>
+                    <span className="grid size-12 place-items-center rounded border border-zinc-200 bg-zinc-100 text-xs font-semibold text-zinc-800">PDF</span>
                   )}
                   <div className="min-w-0 flex-1">
                     {renameId === file.id ? (
@@ -241,22 +241,22 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
                           setRenameId(null);
                         }}
                       >
-                        <Input value={renameValue} onChange={(event) => setRenameValue(event.target.value)} className="h-8 border-zinc-600 bg-zinc-900" aria-label="New file name" />
+                        <Input value={renameValue} onChange={(event) => setRenameValue(event.target.value)} className="h-8 border-zinc-300 bg-white" aria-label="New file name" />
                         <Button type="submit" size="sm">Save</Button>
                       </form>
                     ) : (
                       <p className="truncate font-medium">{file.filename}</p>
                     )}
-                    <p className="text-xs text-zinc-400">
+                    <p className="text-xs text-zinc-500">
                       Added {formatAdded(file.createdAt)}
                       {file.isCover ? " · Cover" : ""}
                     </p>
                   </div>
-                  <a href={src} target="_blank" rel="noreferrer" aria-label={`Open ${file.filename}`} className="rounded p-2 text-zinc-300 hover:bg-white/10">
+                  <a href={src} target="_blank" rel="noreferrer" aria-label={`Open ${file.filename}`} className="rounded p-2 text-zinc-700 hover:bg-zinc-100">
                     <ExternalLink className="size-4" />
                   </a>
                   <DropdownMenu>
-                    <DropdownMenuTrigger aria-label={`Actions for ${file.filename}`} className="rounded p-2 text-zinc-300 hover:bg-white/10">
+                    <DropdownMenuTrigger aria-label={`Actions for ${file.filename}`} className="rounded p-2 text-zinc-700 hover:bg-zinc-100">
                       <MoreHorizontal className="size-4" />
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
@@ -294,11 +294,11 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
               setVendor("");
             }}
           >
-            <select aria-label="Material kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-10 rounded-md border border-zinc-600 bg-zinc-900 px-2 text-sm">
+            <select aria-label="Material kind" value={kind} onChange={(event) => setKind(event.target.value)} className="h-10 rounded-md border border-zinc-300 bg-white px-2 text-sm">
               {MATERIAL_KINDS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
-            <Input value={itemCode} onChange={(event) => setItemCode(event.target.value)} placeholder="Item code" className="h-10 border-zinc-600 bg-zinc-900" />
-            <Input value={vendor} onChange={(event) => setVendor(event.target.value)} placeholder="Vendor" className="h-10 border-zinc-600 bg-zinc-900" />
+            <Input value={itemCode} onChange={(event) => setItemCode(event.target.value)} placeholder="Item code" className="h-10 border-zinc-300 bg-white" />
+            <Input value={vendor} onChange={(event) => setVendor(event.target.value)} placeholder="Vendor" className="h-10 border-zinc-300 bg-white" />
             <Button type="submit">Add</Button>
           </form>
         </section>
@@ -319,7 +319,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
             {board.users.map((user) => {
               const on = card.assignees.some((person) => person.id === user.id);
               return (
-                <Button key={user.id} type="button" variant={on ? "default" : "outline"} className={on ? "" : "border-zinc-600 bg-transparent text-zinc-100"} onClick={() => act(() => changeAssignee(card.id, user.id))}>
+                <Button key={user.id} type="button" variant={on ? "default" : "outline"} className={on ? "" : "border-zinc-300 bg-white text-zinc-900"} onClick={() => act(() => changeAssignee(card.id, user.id))}>
                   {initials(user.name)} {user.name}
                 </Button>
               );
@@ -339,8 +339,8 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
               ))}
             </ul>
             <form className="mt-3 flex gap-2" onSubmit={(event) => { event.preventDefault(); act(() => createCheckItem(card.id, itemText)); setItemText(""); }}>
-              <Input value={itemText} onChange={(event) => setItemText(event.target.value)} placeholder="Add a step" className="h-10 border-zinc-600 bg-zinc-900" />
-              <Button type="submit" variant="outline" className="border-zinc-600 bg-transparent text-zinc-100">Add</Button>
+              <Input value={itemText} onChange={(event) => setItemText(event.target.value)} placeholder="Add a step" className="h-10 border-zinc-300 bg-white" />
+              <Button type="submit" variant="outline" className="border-zinc-300 bg-white text-zinc-900">Add</Button>
             </form>
           </section>
         ))}
@@ -348,14 +348,14 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         <section>
           <h2 className="mb-3 text-lg font-medium">Notes</h2>
           <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); act(() => createNote(card.id, note), "Note added"); setNote(""); }}>
-            <Textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What should the next person know?" className="border-zinc-600 bg-zinc-900" />
+            <Textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What should the next person know?" className="border-zinc-300 bg-white" />
             <Button type="submit" disabled={!note.trim()}>Add note</Button>
           </form>
           <ul className="mt-4 space-y-3">
-            {card.notes.length === 0 ? <li className="text-sm text-zinc-400">No notes yet.</li> : null}
+            {card.notes.length === 0 ? <li className="text-sm text-zinc-500">No notes yet.</li> : null}
             {card.notes.map((entry) => (
-              <li key={entry.id} className="rounded-lg bg-zinc-900 px-3 py-2">
-                <p className="text-xs text-zinc-400">{entry.authorName} · {formatStamp(entry.createdAt)}</p>
+              <li key={entry.id} className="rounded-lg border border-zinc-200 bg-white px-3 py-2">
+                <p className="text-xs text-zinc-500">{entry.authorName} · {formatStamp(entry.createdAt)}</p>
                 <p className="mt-1 text-sm whitespace-pre-wrap">{entry.body}</p>
               </li>
             ))}
@@ -367,7 +367,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
           <ul className="space-y-2 text-sm">
             {card.activity.map((event) => (
               <li key={event.id}>
-                <span className="text-zinc-400">{formatStamp(event.createdAt)}</span>
+                <span className="text-zinc-500">{formatStamp(event.createdAt)}</span>
                 <span> — {event.summary}</span>
               </li>
             ))}
@@ -379,7 +379,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
             <h2 className="mb-2 text-lg font-medium">Other pieces</h2>
             <ul className="space-y-1 text-sm">
               {card.siblings.map((sibling) => (
-                <li key={sibling.id}><Link className="text-sky-300 underline" href={`/cards/${sibling.id}`}>{sibling.title}</Link> · {sibling.listName}</li>
+                <li key={sibling.id}><Link className="text-sky-800 underline" href={`/cards/${sibling.id}`}>{sibling.title}</Link> · {sibling.listName}</li>
               ))}
             </ul>
           </section>
@@ -391,25 +391,25 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
 
 function toneClass(value: string) {
   const text = value.toLowerCase();
-  if (!value) return "border-zinc-600 bg-zinc-900 text-zinc-300";
-  if (text.includes("b.o") || text.includes("backorder") || text.includes("back ordered")) return "border-red-800 bg-red-900 text-white";
+  if (!value) return "border-zinc-300 bg-white text-zinc-500";
+  if (text.includes("b.o") || text.includes("backorder") || text.includes("back ordered")) return "border-red-300 bg-red-100 font-medium text-red-900";
   if (
     text.startsWith("here") ||
     ["joined", "stretched", "typeset done", "done", "cut & join", "in-stock chop & join"].includes(text)
   ) {
-    return "border-emerald-800 bg-emerald-800 text-white";
+    return "border-emerald-300 bg-emerald-100 font-medium text-emerald-950";
   }
   if (text.includes("on order") || text.includes("spreadsheet") || text.includes("order placed") || text === "ordered" || text.includes("order after")) {
-    return "border-amber-500 bg-amber-500 text-black";
+    return "border-amber-300 bg-amber-100 font-medium text-amber-950";
   }
-  return "border-zinc-600 bg-zinc-800 text-zinc-100";
+  return "border-zinc-300 bg-zinc-50 text-zinc-900";
 }
 
 function DarkField({ name, label, defaultValue, required, type = "text", className }: { name: string; label: string; defaultValue: string; required?: boolean; type?: string; className?: string }) {
   return (
     <div className={`space-y-1.5 ${className ?? ""}`}>
-      <Label htmlFor={name} className="text-zinc-300">{label}</Label>
-      <Input id={name} name={name} type={type} defaultValue={defaultValue} required={required} className="h-10 border-zinc-600 bg-zinc-900 text-zinc-100" />
+      <Label htmlFor={name} className="text-zinc-700">{label}</Label>
+      <Input id={name} name={name} type={type} defaultValue={defaultValue} required={required} className="h-10 border-zinc-300 bg-white text-zinc-900" />
     </div>
   );
 }
@@ -417,24 +417,24 @@ function DarkField({ name, label, defaultValue, required, type = "text", classNa
 function DarkArea({ name, label, defaultValue }: { name: string; label: string; defaultValue: string }) {
   return (
     <div className="space-y-1.5 sm:col-span-2">
-      <Label htmlFor={name} className="text-zinc-300">{label}</Label>
-      <Textarea id={name} name={name} defaultValue={defaultValue} className="border-zinc-600 bg-zinc-900 text-zinc-100" />
+      <Label htmlFor={name} className="text-zinc-700">{label}</Label>
+      <Textarea id={name} name={name} defaultValue={defaultValue} className="border-zinc-300 bg-white text-zinc-900" />
     </div>
   );
 }
 
 function MaterialRow({ line, onChange, onEdit, onRemove }: { line: MaterialView; onChange: (status: string) => void; onEdit: (input: { itemCode: string; vendor: string; kind: string }) => void; onRemove: () => void }) {
   return (
-    <div className="grid gap-2 rounded-lg border border-zinc-800 p-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr_auto]">
-      <select aria-label="Kind" defaultValue={line.kind} className="h-10 rounded-md border border-zinc-600 bg-zinc-900 px-2 text-sm" onChange={(event) => onEdit({ kind: event.target.value, itemCode: line.itemCode, vendor: line.vendor })}>
+    <div className="grid gap-2 rounded-lg border border-zinc-200 p-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr_auto]">
+      <select aria-label="Kind" defaultValue={line.kind} className="h-10 rounded-md border border-zinc-300 bg-white px-2 text-sm" onChange={(event) => onEdit({ kind: event.target.value, itemCode: line.itemCode, vendor: line.vendor })}>
         {MATERIAL_KINDS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
-      <Input aria-label="Item code" defaultValue={line.itemCode} className="h-10 border-zinc-600 bg-zinc-900" onBlur={(event) => { if (event.target.value !== line.itemCode) onEdit({ kind: line.kind, itemCode: event.target.value, vendor: line.vendor }); }} />
-      <Input aria-label="Vendor" defaultValue={line.vendor} placeholder="Vendor" className="h-10 border-zinc-600 bg-zinc-900" onBlur={(event) => { if (event.target.value !== line.vendor) onEdit({ kind: line.kind, itemCode: line.itemCode, vendor: event.target.value }); }} />
-      <select aria-label={`${kindLabel(line.kind)} stock status`} value={line.stockStatus} onChange={(event) => onChange(event.target.value)} className="h-10 rounded-md border border-zinc-600 bg-zinc-900 px-2 text-sm">
+      <Input aria-label="Item code" defaultValue={line.itemCode} className="h-10 border-zinc-300 bg-white" onBlur={(event) => { if (event.target.value !== line.itemCode) onEdit({ kind: line.kind, itemCode: event.target.value, vendor: line.vendor }); }} />
+      <Input aria-label="Vendor" defaultValue={line.vendor} placeholder="Vendor" className="h-10 border-zinc-300 bg-white" onBlur={(event) => { if (event.target.value !== line.vendor) onEdit({ kind: line.kind, itemCode: line.itemCode, vendor: event.target.value }); }} />
+      <select aria-label={`${kindLabel(line.kind)} stock status`} value={line.stockStatus} onChange={(event) => onChange(event.target.value)} className="h-10 rounded-md border border-zinc-300 bg-white px-2 text-sm">
         {STOCK_STATUSES.map((status) => <option key={status.id} value={status.id}>{statusLabel(status.id)}</option>)}
       </select>
-      <Button type="button" variant="ghost" className="text-zinc-200" onClick={onRemove}>Remove</Button>
+      <Button type="button" variant="ghost" className="text-zinc-800" onClick={onRemove}>Remove</Button>
     </div>
   );
 }
