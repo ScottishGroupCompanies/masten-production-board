@@ -1,21 +1,23 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type RefObject } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
   PointerSensor,
+  closestCenter,
   closestCorners,
+  pointerWithin,
   useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { Archive, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { archiveCard, createCard, saveOrder } from "@/app/actions";
@@ -25,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { statusShort } from "@/data/board-schema";
+import { applyOrder, indicatorIndex, openCards, orderAgrees, planCardMove, sameOrder, type MovePlan, type OrderGroup } from "@/lib/board-drag";
 import type { BoardCard, BoardData } from "@/lib/board-types";
 import { formatShopDate, initials } from "@/lib/format";
 
@@ -38,6 +41,66 @@ type Filters = {
 };
 
 const emptyFilters: Filters = { q: "", label: "", assignee: "", due: "", material: "", archived: false };
+
+const collisionDetection: CollisionDetection = (args) => {
+  const hits = pointerWithin(args);
+  if (hits.length > 0) {
+    const cardHits = hits.filter((hit) => !String(hit.id).startsWith("list:"));
+    if (cardHits.length > 0) {
+      const ids = new Set(cardHits.map((hit) => hit.id));
+      return closestCenter({
+        ...args,
+        droppableContainers: args.droppableContainers.filter((container) => ids.has(container.id)),
+      });
+    }
+    return hits;
+  }
+  return closestCorners(args);
+};
+
+type DropPreview = { listId: string; index: number };
+
+function pointerFromEvent(event: { activatorEvent: Event; delta?: { x: number; y: number } }) {
+  const activator = event.activatorEvent;
+  if (!("clientX" in activator) || !("clientY" in activator)) return null;
+  if (typeof activator.clientX !== "number" || typeof activator.clientY !== "number") return null;
+  return {
+    x: activator.clientX + (event.delta?.x ?? 0),
+    y: activator.clientY + (event.delta?.y ?? 0),
+  };
+}
+
+function cardMidpoint(id: string) {
+  if (typeof document === "undefined") return null;
+  const element = document.querySelector(`[data-card-id="${CSS.escape(id)}"]`);
+  if (!(element instanceof HTMLElement)) return null;
+  const rect = element.getBoundingClientRect();
+  if (rect.height <= 0) return null;
+  return rect.top + rect.height / 2;
+}
+
+function targetUnderPointer(x: number, y: number) {
+  const elements = document.elementsFromPoint(x, y);
+  for (const element of elements) {
+    if (!(element instanceof Element)) continue;
+    const card = element.closest("[data-card-id]");
+    if (card instanceof HTMLElement) {
+      const id = card.dataset.cardId;
+      if (id) return id;
+    }
+    const list = element.closest("[data-list-id]");
+    if (list instanceof HTMLElement && list.dataset.listId) return `list:${list.dataset.listId}`;
+  }
+  return "";
+}
+
+function previewFor(cards: BoardCard[], activeId: string, overId: string, pointerY: number | null): (DropPreview & { plan: MovePlan }) | null {
+  if (!overId) return null;
+  const plan = planCardMove({ cards, activeId, overId, pointerY, midY: cardMidpoint });
+  if (!plan) return null;
+  const rendered = openCards(cards, plan.destListId).map((card) => card.id);
+  return { listId: plan.destListId, index: indicatorIndex(rendered, activeId, plan.index), plan };
+}
 
 function matches(card: BoardCard, filters: Filters, today: string) {
   if (card.archived !== filters.archived) return false;
@@ -69,55 +132,95 @@ function addDays(iso: string, days: number) {
 export function BoardView({ data }: { data: BoardData }) {
   const router = useRouter();
   const [cards, setCards] = useState(data.cards);
-  const [source, setSource] = useState(data.cards);
-  if (source !== data.cards) {
-    setSource(data.cards);
-    setCards(data.cards);
-  }
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<DropPreview | null>(null);
   const [pending, startTransition] = useTransition();
   const [draftList, setDraftList] = useState<BoardData["lists"][number] | null>(null);
+  const boardRef = useRef<HTMLDivElement>(null);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  const suppressClick = useRef(false);
+  const savesInFlight = useRef(0);
+  const dragEpoch = useRef(0);
+  const expectedOrder = useRef<OrderGroup[] | null>(null);
+
+  useEffect(() => {
+    if (savesInFlight.current > 0) return;
+    if (expectedOrder.current && !orderAgrees(data.cards, expectedOrder.current)) return;
+    expectedOrder.current = null;
+    setCards(data.cards);
+  }, [data.cards]);
   const filtered = filters.q || filters.label || filters.assignee || filters.due || filters.material || filters.archived;
   const visible = useMemo(() => cards.filter((card) => matches(card, filters, data.today)), [cards, filters, data.today]);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const active = cards.find((card) => card.id === activeId) ?? null;
 
-  function onDragEnd(event: DragEndEvent) {
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent) => {
+      pointerRef.current = { x: event.clientX, y: event.clientY };
+    };
+    window.addEventListener("pointermove", onPointerMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onPointerMove);
+  }, []);
+
+  useEffect(() => {
+    if (!activeId) return;
+    let frame = 0;
+    const tick = () => {
+      const board = boardRef.current;
+      const pointer = pointerRef.current;
+      if (board && pointer) {
+        scrollBoard(board, pointer.x);
+        scrollColumn(pointer.x, pointer.y);
+        const overId = targetUnderPointer(pointer.x, pointer.y);
+        const next = previewFor(cards, activeId, overId, pointer.y);
+        setPreview((current) => (current?.listId === next?.listId && current?.index === next?.index ? current : next));
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [activeId, cards]);
+
+  function onDragStart(event: DragStartEvent) {
+    suppressClick.current = true;
+    setActiveId(String(event.active.id));
+  }
+
+  function finishDrag(event: DragEndEvent) {
+    const activeCardId = String(event.active.id);
+    const pointer = pointerRef.current ?? pointerFromEvent(event);
     setActiveId(null);
+    setPreview(null);
+    window.setTimeout(() => {
+      suppressClick.current = false;
+    }, 0);
     if (filtered) return;
-    const overId = event.over ? String(event.over.id) : "";
-    const activeCard = cards.find((card) => card.id === String(event.active.id));
-    if (!overId || !activeCard || activeCard.archived) return;
-    const destListId = overId.startsWith("list:") ? overId.slice(5) : cards.find((card) => card.id === overId)?.listId;
-    if (!destListId) return;
-    const openIn = (listId: string) =>
-      cards.filter((card) => card.listId === listId && !card.archived).sort((a, b) => a.position - b.position);
-    const source = openIn(activeCard.listId).filter((card) => card.id !== activeCard.id);
-    const base = activeCard.listId === destListId ? source : openIn(destListId);
-    let index = base.length;
-    if (!overId.startsWith("list:")) {
-      const overIndex = base.findIndex((card) => card.id === overId);
-      if (overIndex >= 0) index = overIndex;
-    }
-    const dest = [...base];
-    dest.splice(index, 0, { ...activeCard, listId: destListId });
-    const groups = [{ listId: destListId, cardIds: dest.map((card) => card.id) }];
-    if (activeCard.listId !== destListId) groups.push({ listId: activeCard.listId, cardIds: source.map((card) => card.id) });
-    setCards((current) => {
-      const untouched = current.filter((card) => card.archived || !groups.some((group) => group.listId === card.listId || card.id === activeCard.id));
-      const placed = groups.flatMap((group) =>
-        group.cardIds.map((id, position) => {
-          const card = current.find((item) => item.id === id) ?? activeCard;
-          return { ...card, listId: group.listId, position: position * 1000 };
-        }),
-      );
-      return [...untouched, ...placed];
+    const overId = (pointer && targetUnderPointer(pointer.x, pointer.y)) || (event.over ? String(event.over.id) : "");
+    const plan = planCardMove({
+      cards,
+      activeId: activeCardId,
+      overId,
+      pointerY: pointer?.y ?? null,
+      midY: cardMidpoint,
     });
+    if (!plan || sameOrder(cards, plan.groups)) return;
+    const snapshot = cards;
+    const epoch = ++dragEpoch.current;
+    expectedOrder.current = plan.groups;
+    setCards(applyOrder(cards, plan.groups));
+    savesInFlight.current += 1;
     startTransition(async () => {
-      const result = await saveOrder(groups);
-      if (!result.ok) toast.error(result.error);
-      router.refresh();
+      const result = await saveOrder(plan.groups);
+      savesInFlight.current -= 1;
+      if (!result.ok) {
+        if (dragEpoch.current === epoch) {
+          expectedOrder.current = null;
+          setCards(snapshot);
+        }
+        toast.error(result.error);
+      }
+      if (savesInFlight.current === 0) router.refresh();
     });
   }
 
@@ -126,14 +229,23 @@ export function BoardView({ data }: { data: BoardData }) {
       <FilterBar data={data} filters={filters} setFilters={setFilters} count={visible.length} total={cards.filter((card) => !card.archived).length} filtered={Boolean(filtered)} />
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCorners}
-        onDragStart={(event: DragStartEvent) => setActiveId(String(event.active.id))}
-        onDragEnd={onDragEnd}
-        onDragCancel={() => setActiveId(null)}
+        collisionDetection={collisionDetection}
+        autoScroll={false}
+        onDragStart={onDragStart}
+        onDragEnd={finishDrag}
+        onDragCancel={() => {
+          setActiveId(null);
+          setPreview(null);
+          window.setTimeout(() => {
+            suppressClick.current = false;
+          }, 0);
+        }}
       >
-        <div className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-3 py-3 sm:px-4">
+        <div ref={boardRef} data-board-scroll="true" className="flex min-h-0 flex-1 gap-3 overflow-x-auto px-3 py-3 sm:px-4">
           {data.lists.map((list) => {
-            const columnCards = visible.filter((card) => card.listId === list.id).sort((a, b) => a.position - b.position);
+            const columnCards = visible
+              .filter((card) => card.listId === list.id)
+              .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id));
             const openCount = cards.filter((card) => card.listId === list.id && !card.archived).length;
             const archivedCount = cards.filter((card) => card.listId === list.id && card.archived).length;
             return (
@@ -144,6 +256,8 @@ export function BoardView({ data }: { data: BoardData }) {
                 openCount={openCount}
                 archivedCount={archivedCount}
                 dragEnabled={!filtered}
+                dropIndex={preview?.listId === list.id ? preview.index : null}
+                suppressClick={suppressClick}
                 onAdd={() => setDraftList(list)}
                 onArchive={(card) => {
                   startTransition(async () => {
@@ -157,7 +271,9 @@ export function BoardView({ data }: { data: BoardData }) {
             );
           })}
         </div>
-        <DragOverlay>{active ? <CardFace card={active} overlay /> : null}</DragOverlay>
+        <DragOverlay dropAnimation={null} zIndex={40} className="pointer-events-none" style={{ pointerEvents: "none" }}>
+          {active ? <CardFace card={active} overlay /> : null}
+        </DragOverlay>
       </DndContext>
       {pending ? <p className="sr-only">Saving</p> : null}
       <NewCardDialog
@@ -228,7 +344,7 @@ function FilterSelect({ label, value, onChange, options }: { label: string; valu
       aria-label={label}
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="min-h-10 max-w-[180px] rounded-lg border bg-card px-2 text-sm"
+      className="min-h-10 max-w-[180px] rounded-lg border bg-card px-2 text-base"
     >
       {options.map((option) => (
         <option key={option.value || "any"} value={option.value}>
@@ -239,12 +355,47 @@ function FilterSelect({ label, value, onChange, options }: { label: string; valu
   );
 }
 
+function scrollBoard(board: HTMLElement, pointerX: number) {
+  const rect = board.getBoundingClientRect();
+  const edge = 112;
+  const maxSpeed = 8;
+  const leftGap = pointerX - rect.left;
+  const rightGap = rect.right - pointerX;
+  if (leftGap < edge) {
+    const speed = Math.round(maxSpeed * (1 - Math.max(leftGap, 0) / edge) ** 2);
+    if (speed) board.scrollLeft -= speed;
+  } else if (rightGap < edge) {
+    const speed = Math.round(maxSpeed * (1 - Math.max(rightGap, 0) / edge) ** 2);
+    if (speed) board.scrollLeft += speed;
+  }
+}
+
+function scrollColumn(pointerX: number, pointerY: number) {
+  const hit = document.elementFromPoint(pointerX, pointerY);
+  const column = hit?.closest("[data-column-scroll]");
+  if (!(column instanceof HTMLElement)) return;
+  const rect = column.getBoundingClientRect();
+  const edge = 72;
+  const maxSpeed = 16;
+  const topGap = pointerY - rect.top;
+  const bottomGap = rect.bottom - pointerY;
+  if (topGap < edge) {
+    const speed = Math.round(maxSpeed * (1 - Math.max(topGap, 0) / edge) ** 2);
+    if (speed) column.scrollTop -= speed;
+  } else if (bottomGap < edge) {
+    const speed = Math.round(maxSpeed * (1 - Math.max(bottomGap, 0) / edge) ** 2);
+    if (speed) column.scrollTop += speed;
+  }
+}
+
 function Column({
   list,
   cards,
   openCount,
   archivedCount,
   dragEnabled,
+  dropIndex,
+  suppressClick,
   onAdd,
   onArchive,
 }: {
@@ -253,16 +404,23 @@ function Column({
   openCount: number;
   archivedCount: number;
   dragEnabled: boolean;
+  dropIndex: number | null;
+  suppressClick: RefObject<boolean>;
   onAdd: () => void;
   onArchive: (card: BoardCard) => void;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `list:${list.id}`, disabled: !dragEnabled });
+  const { setNodeRef } = useDroppable({ id: `list:${list.id}`, disabled: !dragEnabled, data: { type: "list", listId: list.id } });
+  const targeted = dropIndex != null;
   return (
-    <section className="flex h-full w-[292px] shrink-0 flex-col rounded-xl bg-[#e7e1d6]">
+    <section
+      ref={setNodeRef}
+      data-list-id={list.id}
+      className={`flex h-full w-[292px] shrink-0 flex-col rounded-xl ${targeted ? "bg-[#d9d0c2] ring-2 ring-[#1c2b26]" : "bg-[#e7e1d6]"}`}
+    >
       <header className="flex items-start gap-2 px-3 pt-3 pb-2">
         <div className="min-w-0 flex-1">
-          <h2 className="text-sm leading-tight font-semibold">{list.name}</h2>
-          <p className="text-xs text-muted-foreground">
+          <h2 className="text-[15px] leading-snug font-semibold">{list.name}</h2>
+          <p className="text-sm leading-snug text-zinc-600">
             {openCount} {openCount === 1 ? "card" : "cards"}
             {archivedCount ? ` · ${archivedCount} archived` : ""}
           </p>
@@ -271,65 +429,101 @@ function Column({
           <Plus />
         </Button>
       </header>
-      <div ref={setNodeRef} className={`min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-3 ${isOver ? "bg-[#ddd6c8]" : ""}`}>
+      <div data-column-scroll="true" className="min-h-16 flex-1 space-y-2 overflow-y-auto px-2 pb-3">
         <SortableContext items={cards.map((card) => card.id)} strategy={verticalListSortingStrategy}>
-          {cards.map((card) => (
-            <SortableCard key={card.id} card={card} dragEnabled={dragEnabled} onArchive={onArchive} />
+          {cards.map((card, index) => (
+            <Fragment key={card.id}>
+              {dropIndex === index ? <DropLine /> : null}
+              <SortableCard card={card} dragEnabled={dragEnabled} suppressClick={suppressClick} onArchive={onArchive} />
+            </Fragment>
           ))}
         </SortableContext>
-        {cards.length === 0 ? <p className="px-1 py-6 text-center text-xs text-muted-foreground">{dragEnabled ? "Nothing here" : "No match"}</p> : null}
+        {dropIndex === cards.length ? <DropLine /> : null}
+        {cards.length === 0 ? <p className="px-1 py-6 text-center text-sm text-zinc-600">{dragEnabled ? "Nothing here" : "No match"}</p> : null}
       </div>
     </section>
   );
 }
 
-function SortableCard({ card, dragEnabled, onArchive }: { card: BoardCard; dragEnabled: boolean; onArchive: (card: BoardCard) => void }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: card.id, disabled: !dragEnabled });
+function DropLine() {
+  return <div className="h-1.5 rounded-full bg-[#1c2b26]" aria-hidden />;
+}
+
+function SortableCard({
+  card,
+  dragEnabled,
+  suppressClick,
+  onArchive,
+}: {
+  card: BoardCard;
+  dragEnabled: boolean;
+  suppressClick: RefObject<boolean>;
+  onArchive: (card: BoardCard) => void;
+}) {
+  const router = useRouter();
+  const { attributes, listeners, setNodeRef, isDragging } = useSortable({
+    id: card.id,
+    disabled: !dragEnabled,
+    data: { type: "card", listId: card.listId },
+    animateLayoutChanges: () => false,
+  });
   return (
     <div
       ref={setNodeRef}
-      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}
+      data-card-id={card.id}
+      className={isDragging ? "pointer-events-none opacity-40" : dragEnabled ? "cursor-grab touch-none active:cursor-grabbing" : undefined}
       {...attributes}
-      {...listeners}
+      {...(dragEnabled ? listeners : {})}
+      onClick={(event) => {
+        if (suppressClick.current) return;
+        const target = event.target;
+        if (!(target instanceof Element) || target.closest("a, button")) return;
+        router.push(`/cards/${card.id}`);
+      }}
     >
-      <CardFace card={card} dragProps={{ ...attributes, ...listeners }} onArchive={() => onArchive(card)} />
+      <CardFace card={card} suppressClick={suppressClick} onArchive={() => onArchive(card)} />
     </div>
   );
 }
 
 function CardFace({
   card,
-  dragProps,
+  suppressClick,
   onArchive,
   overlay = false,
 }: {
   card: BoardCard;
-  dragProps?: Record<string, unknown>;
+  suppressClick?: RefObject<boolean>;
   onArchive?: () => void;
   overlay?: boolean;
 }) {
   const problems = summarize(card);
   return (
     <article
-      {...(overlay ? {} : dragProps)}
-      onPointerDown={(event) => {
-        const handler = dragProps?.onPointerDown as ((event: React.PointerEvent<HTMLElement>) => void) | undefined;
-        handler?.(event);
-      }}
-      className={`rounded-lg border bg-card p-2.5 shadow-sm touch-none ${overlay ? "w-[276px] rotate-1 shadow-lg" : "cursor-grab active:cursor-grabbing"} ${card.needsReview ? "border-amber-500" : ""} ${card.archived ? "opacity-70" : ""}`}
+      className={`rounded-lg border bg-card p-3 shadow-sm select-none ${overlay ? "w-[276px] rotate-1 shadow-2xl ring-2 ring-[#1c2b26]/20" : ""} ${card.needsReview ? "border-amber-500" : ""} ${card.archived ? "opacity-70" : ""}`}
     >
-      {card.needsReview ? <p className="mb-1 text-[11px] font-semibold tracking-wide text-amber-800 uppercase">Needs review</p> : null}
+      {card.needsReview ? <p className="mb-1 text-xs font-semibold text-amber-900">Needs review</p> : null}
       {overlay ? (
-        <p className="text-left text-[13px] leading-snug font-semibold">{card.title}</p>
+        <p className="text-left text-base leading-snug font-semibold">{card.title}</p>
       ) : (
-        <Link href={`/cards/${card.id}`} onPointerDown={(event) => event.stopPropagation()} className="block text-left text-[13px] leading-snug font-semibold">
+        <Link
+          href={`/cards/${card.id}`}
+          draggable={false}
+          onClick={(event) => {
+            if (suppressClick?.current) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
+          className="block text-left text-base leading-snug font-semibold"
+        >
           {card.title}
         </Link>
       )}
       {card.labels.length ? (
         <div className="mt-2 flex flex-wrap gap-1">
           {card.labels.slice(0, 4).map((label) => (
-            <span key={label.id} className="rounded-full border px-1.5 py-0.5 text-[10px] font-medium" style={{ borderColor: label.color, backgroundColor: `${label.color}22` }}>
+            <span key={label.id} className="rounded-full border px-2 py-0.5 text-xs font-medium" style={{ borderColor: label.color, backgroundColor: `${label.color}22` }}>
               {label.name}
             </span>
           ))}
@@ -337,28 +531,28 @@ function CardFace({
       ) : null}
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {card.dueDate ? (
-          <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${card.overdue ? "bg-red-700 text-white" : "bg-amber-100 text-amber-950"}`}>
+          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${card.overdue ? "bg-red-700 text-white" : "bg-amber-100 text-amber-950"}`}>
             {card.overdue ? "Overdue" : "Due"} {formatShopDate(card.dueDate)}
           </span>
         ) : null}
         {problems.map((problem) => (
-          <span key={problem} className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${badgeClass(problem)}`}>
+          <span key={problem} className={`rounded-full px-2 py-0.5 text-xs font-medium ${badgeClass(problem)}`}>
             {problem}
           </span>
         ))}
-        {card.materials.length > 0 && problems.length === 0 && !card.needsReview ? <span className="text-[10px] font-medium text-emerald-800">In house</span> : null}
+        {card.materials.length > 0 && problems.length === 0 && !card.needsReview ? <span className="text-xs font-medium text-emerald-800">In house</span> : null}
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
         <div className="flex -space-x-1">
           {card.assignees.map((person) => (
-            <span key={person.id} title={person.name} className="grid size-6 place-items-center rounded-full border border-zinc-300 bg-white text-[10px] font-semibold text-zinc-800">
+            <span key={person.id} title={person.name} className="grid size-7 place-items-center rounded-full border border-zinc-300 bg-white text-xs font-semibold text-zinc-800">
               {initials(person.name)}
             </span>
           ))}
         </div>
         {onArchive ? (
           <button type="button" aria-label={card.archived ? "Unarchive card" : "Archive card"} className="rounded p-1 text-muted-foreground hover:bg-muted" onPointerDown={(event) => event.stopPropagation()} onClick={onArchive}>
-            <Archive className="size-3.5" />
+            <Archive className="size-4" />
           </button>
         ) : null}
       </div>

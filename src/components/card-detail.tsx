@@ -90,7 +90,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
 
       <div className="mx-auto max-w-5xl space-y-8 px-4 py-6 sm:px-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <h1 className="text-2xl leading-snug font-medium">{card.title}</h1>
+          <h1 className="text-2xl leading-snug font-semibold">{card.title}</h1>
           <div className="flex gap-2">
             {card.needsReview ? <span className="rounded-full bg-amber-500 px-2 py-1 text-xs font-semibold text-black">Needs review</span> : null}
             {card.overdue ? <span className="rounded-full bg-red-700 px-2 py-1 text-xs font-semibold">Overdue {formatShopDate(card.dueDate)}</span> : null}
@@ -98,7 +98,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         </div>
 
         <section>
-          <h2 className="mb-3 text-sm font-semibold tracking-wide text-zinc-500 uppercase">Client</h2>
+          <h2 className="mb-3 text-base font-semibold text-zinc-700">Client</h2>
           <form
             className="grid gap-3 sm:grid-cols-2"
             onSubmit={(event) => {
@@ -166,7 +166,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         </section>
 
         <section id="custom-fields">
-          <h2 className="mb-4 flex items-center gap-2 text-lg font-medium">
+          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold leading-snug">
             <span className="text-zinc-500">#</span> Custom Fields
           </h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -204,7 +204,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
 
         <section id="attachments">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-lg font-medium">
+            <h2 className="flex items-center gap-2 text-lg font-semibold leading-snug">
               <Paperclip className="size-4 text-zinc-500" /> Attachments
             </h2>
             <form action={async (formData) => {
@@ -247,7 +247,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
                     ) : (
                       <p className="truncate font-medium">{file.filename}</p>
                     )}
-                    <p className="text-xs text-zinc-500">
+                    <p className="text-sm leading-snug text-zinc-600">
                       Added {formatAdded(file.createdAt)}
                       {file.isCover ? " · Cover" : ""}
                     </p>
@@ -272,7 +272,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         </section>
 
         <section>
-          <h2 className="mb-3 text-lg font-medium">Materials</h2>
+          <h2 className="mb-3 text-lg font-semibold leading-snug">Materials</h2>
           <div className="space-y-2">
             {card.materials.map((line) => (
               <MaterialRow
@@ -304,12 +304,12 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         </section>
 
         <section>
-          <h2 className="mb-3 text-lg font-medium">Labels and people</h2>
+          <h2 className="mb-3 text-lg font-semibold leading-snug">Labels and people</h2>
           <div className="flex flex-wrap gap-1.5">
             {board.labels.map((label) => {
               const on = card.labels.some((item) => item.id === label.id);
               return (
-                <button key={label.id} type="button" onClick={() => act(() => changeLabel(card.id, label.id), on ? "Label removed" : "Label added")} className="rounded-full border px-2 py-1 text-xs" style={{ borderColor: label.color, background: on ? `${label.color}55` : "transparent" }}>
+                <button key={label.id} type="button" onClick={() => act(() => changeLabel(card.id, label.id), on ? "Label removed" : "Label added")} className="rounded-full border px-2.5 py-1 text-sm leading-snug" style={{ borderColor: label.color, background: on ? `${label.color}55` : "transparent" }}>
                   {label.name}
                 </button>
               );
@@ -329,7 +329,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
 
         {card.checklists.map((list) => (
           <section key={list.id}>
-            <h2 className="mb-3 text-lg font-medium">{list.title}</h2>
+            <h2 className="mb-3 text-lg font-semibold leading-snug">{list.title}</h2>
             <ul className="space-y-2">
               {list.items.map((item) => (
                 <li key={item.id} className="flex items-start gap-2">
@@ -346,7 +346,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         ))}
 
         <section>
-          <h2 className="mb-3 text-lg font-medium">Notes</h2>
+          <h2 className="mb-3 text-lg font-semibold leading-snug">Notes</h2>
           <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); act(() => createNote(card.id, note), "Note added"); setNote(""); }}>
             <Textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What should the next person know?" className="border-zinc-300 bg-white" />
             <Button type="submit" disabled={!note.trim()}>Add note</Button>
@@ -355,7 +355,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
             {card.notes.length === 0 ? <li className="text-sm text-zinc-500">No notes yet.</li> : null}
             {card.notes.map((entry) => (
               <li key={entry.id} className="rounded-lg border border-zinc-200 bg-white px-3 py-2">
-                <p className="text-xs text-zinc-500">{entry.authorName} · {formatStamp(entry.createdAt)}</p>
+                <p className="text-sm leading-snug text-zinc-600">{entry.authorName} · {formatStamp(entry.createdAt)}</p>
                 <p className="mt-1 text-sm whitespace-pre-wrap">{entry.body}</p>
               </li>
             ))}
@@ -363,7 +363,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         </section>
 
         <section>
-          <h2 className="mb-3 text-lg font-medium">Activity</h2>
+          <h2 className="mb-3 text-lg font-semibold leading-snug">Activity</h2>
           <ul className="space-y-2 text-sm">
             {card.activity.map((event) => (
               <li key={event.id}>
@@ -376,7 +376,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
 
         {card.siblings.length ? (
           <section>
-            <h2 className="mb-2 text-lg font-medium">Other pieces</h2>
+            <h2 className="mb-2 text-lg font-semibold leading-snug">Other pieces</h2>
             <ul className="space-y-1 text-sm">
               {card.siblings.map((sibling) => (
                 <li key={sibling.id}><Link className="text-sky-800 underline" href={`/cards/${sibling.id}`}>{sibling.title}</Link> · {sibling.listName}</li>

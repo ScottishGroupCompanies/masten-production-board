@@ -20,8 +20,8 @@ export function ToOrderView({ lines }: { lines: OrderLine[] }) {
       <div className="mx-auto max-w-6xl p-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <h1 className="font-display text-3xl">To order</h1>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+            <h1 className="text-3xl font-semibold leading-snug">To order</h1>
+            <p className="mt-1 max-w-2xl text-base leading-relaxed text-muted-foreground">
               Every Not In Stock line on an open production card, grouped by vendor. This replaces the vendor card.
             </p>
           </div>
@@ -45,12 +45,12 @@ export function ToOrderView({ lines }: { lines: OrderLine[] }) {
             {groups.map((group) => (
               <section key={group.vendor} className="overflow-hidden rounded-xl border bg-card">
                 <header className="flex items-center justify-between border-b bg-[#f7f3ea] px-4 py-3">
-                  <h2 className="font-display text-2xl">{group.vendor}</h2>
+                  <h2 className="text-2xl font-semibold leading-snug">{group.vendor}</h2>
                   <span className="text-sm text-muted-foreground">{group.lines.length} lines</span>
                 </header>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[760px] text-left text-sm">
-                    <thead className="text-xs tracking-wide text-muted-foreground uppercase">
+                    <thead className="text-sm font-medium text-zinc-600">
                       <tr>
                         <th className="px-4 py-2 font-medium">Item</th>
                         <th className="px-4 py-2 font-medium">Kind</th>
@@ -84,7 +84,7 @@ function OrderRow({ line, orderedView }: { line: OrderLine; orderedView: boolean
       <td className="px-4 py-3">{line.kindLabel}</td>
       <td className="px-4 py-3">
         <Link href={`/cards/${line.cardId}`} className="underline">{line.customerName}</Link>
-        <div className="text-xs text-muted-foreground">
+        <div className="text-sm leading-snug text-zinc-600">
           {line.workOrderNumber ? `W.O.${line.workOrderNumber}` : "No W.O."}
           {line.invoiceNumber ? ` · Inv.${line.invoiceNumber}` : ""}
           {line.pieceCount ? ` · ${line.pieceIndex}/${line.pieceCount}` : ""} {line.size}
