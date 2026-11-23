@@ -1,18 +1,16 @@
 import type { Metadata } from "next";
-import { Fraunces, Source_Sans_3 } from "next/font/google";
+import { Instrument_Sans } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
-const sans = Source_Sans_3({
+const sans = Instrument_Sans({
   subsets: ["latin"],
-  variable: "--font-sans",
-});
-
-const display = Fraunces({
-  subsets: ["latin"],
-  variable: "--font-display",
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+  variable: "--font-instrument-sans",
+  adjustFontFallback: true,
 });
 
 export const metadata: Metadata = {
@@ -27,8 +25,8 @@ export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${sans.variable} ${display.variable} h-full antialiased`} suppressHydrationWarning>
-      <body className="min-h-full bg-background text-foreground">
+    <html lang="en" className={`${sans.variable} h-full antialiased`} suppressHydrationWarning>
+      <body className={`${sans.className} min-h-full bg-background text-base leading-normal tracking-normal text-foreground`}>
         <ThemeProvider attribute="class" forcedTheme="light" enableSystem={false}>
           <TooltipProvider>
             {children}

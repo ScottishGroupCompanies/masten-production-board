@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { logout } from "@/app/actions";
+import { MastenWordmark } from "@/components/masten-wordmark";
 import { Button } from "@/components/ui/button";
 import type { CurrentUser } from "@/lib/auth";
 
@@ -14,15 +15,10 @@ export function AppShell({
 }) {
   return (
     <div className="flex h-dvh flex-col">
-      <header className="flex shrink-0 items-center gap-3 border-b bg-white px-3 py-2.5 text-zinc-900 sm:px-4">
-        <Link href="/" className="flex min-w-0 items-center gap-2.5">
-          <span className="grid size-8 place-items-center rounded-md border border-zinc-300 bg-[#f6f3ec]">
-            <span className="size-3.5 border border-zinc-700 bg-[#c4a574]" />
-          </span>
-          <span className="min-w-0">
-            <span className="font-display block text-lg leading-none tracking-tight">Masten</span>
-            <span className="text-[11px] tracking-wide text-zinc-500 uppercase">Production board</span>
-          </span>
+      <header className="flex shrink-0 items-center gap-3 border-b bg-[#f8f5ef] px-3 py-2.5 text-zinc-900 sm:px-4">
+        <Link href="/" className="flex min-w-0 items-center gap-3" aria-label="Masten production board">
+          <MastenWordmark priority />
+          <span className="hidden text-sm font-medium leading-tight text-zinc-700 md:block">Production board</span>
         </Link>
         <nav className="ml-auto flex items-center gap-1 sm:ml-4 sm:mr-auto">
           <Link
@@ -40,7 +36,7 @@ export function AppShell({
         </nav>
         <div className="hidden text-right sm:block">
           <div className="text-sm leading-tight">{user.name}</div>
-          <div className="text-[11px] text-zinc-500">{user.role === "admin" ? "Admin" : "Staff"}</div>
+          <div className="text-xs text-zinc-600">{user.role === "admin" ? "Admin" : "Staff"}</div>
         </div>
         <form action={logout}>
           <Button type="submit" variant="outline">
