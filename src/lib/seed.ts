@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
-import { hashSync } from "bcryptjs";
 import { CUSTOM_FIELDS, LABELS, LISTS, slugId } from "@/data/board-schema";
 import { adminCredentials, assertProductionConfig } from "./config";
 import { ensureReady, migrate, transaction } from "./db";
+import { hashPassword } from "./password";
 
 export async function seedCatalog(): Promise<{ adminCreated: boolean }> {
   if (LISTS.length !== 25) throw new Error(`Expected 25 lists, found ${LISTS.length}`);
@@ -73,7 +73,7 @@ export async function seedCatalog(): Promise<{ adminCreated: boolean }> {
         `insert into users (id, email, name, password_hash, role, created_at)
          select ?, ?, ?, ?, ?, ?
          where not exists (select 1 from users where email = ?)`,
-        [randomUUID(), admin.email, admin.name, hashSync(admin.password, 8), "admin", now, admin.email],
+        [randomUUID(), admin.email, admin.name, hashPassword(admin.password), "admin", now, admin.email],
       );
       adminCreated = true;
     }

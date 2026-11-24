@@ -1,6 +1,24 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { canOpenUsers, isUsersPath } from "@/lib/access";
 import { SESSION_COOKIE } from "@/lib/config";
 import { readSessionToken } from "@/lib/session";
+
+const FORBIDDEN_USERS_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="robots" content="noindex">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admins only</title>
+</head>
+<body style="margin:0;min-height:100vh;display:grid;place-items:center;background:#f8f5ef;color:#3f3a33;font-family:system-ui,sans-serif">
+  <main style="max-width:28rem;padding:1.5rem;text-align:center">
+    <h1 style="font-size:1.75rem;font-weight:600;line-height:1.3">Admins only</h1>
+    <p style="line-height:1.5">The users page is not available for staff accounts.</p>
+    <p><a href="/">Back to the board</a></p>
+  </main>
+</body>
+</html>`;
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -13,6 +31,16 @@ export async function proxy(request: NextRequest) {
   if (!session) {
     if (pathname.startsWith("/api/")) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     return NextResponse.redirect(new URL("/login", request.url));
+  }
+  if (isUsersPath(pathname) && !canOpenUsers(session.role)) {
+    return new NextResponse(FORBIDDEN_USERS_HTML, {
+      status: 403,
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "x-robots-tag": "noindex",
+      },
+    });
   }
   return NextResponse.next();
 }

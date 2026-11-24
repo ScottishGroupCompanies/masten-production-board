@@ -204,3 +204,11 @@ SQLite. Development uses a local file. Production uses Cloudflare D1. A Turso li
 The board scrolls sideways across all 25 lists. Drag a card between columns or reorder it inside a column. Counts in the headers are open cards. Archive from the card, and turn on Archived in the filter bar to put it back. Search matches customer, work order, and invoice. Filters cover label, assignee, due date, and material status.
 
 **To order** groups every Not In Stock line by vendor. Mark ordered when it is placed, then Mark here when it arrives.
+
+## Accounts
+
+An admin opens **Users** in the header (`/users`) to add a person, reset a password, change a role, or remove an account. The email is the login. It does not have to be a real mailbox, so an address like `name@masten.test` is allowed. The password is at least 8 characters and is stored with the same hash as the first admin.
+
+Staff who open `/users` get **403** and do not see the page. Anyone who is signed in can change their own password from **Password** in the header (`/account`).
+
+The last admin cannot be removed or changed to staff. New accounts are created in the app. They are not written into the repo, the migration, or the demo seed.
