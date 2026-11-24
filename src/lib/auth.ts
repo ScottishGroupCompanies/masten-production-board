@@ -1,8 +1,9 @@
-import { compareSync } from "bcryptjs";
+import { forbidden, redirect } from "next/navigation";
 import { connection } from "next/server";
-import { redirect } from "next/navigation";
 import { all, get } from "./db";
 import { getSession } from "./session";
+
+export { passwordMatches } from "./password";
 
 export type CurrentUser = {
   id: string;
@@ -29,10 +30,6 @@ export async function findUserByEmail(email: string): Promise<(CurrentUser & { p
   };
 }
 
-export function passwordMatches(password: string, hash: string): boolean {
-  return compareSync(password, hash);
-}
-
 export async function requireUser(): Promise<CurrentUser> {
   await connection();
   const session = await getSession();
@@ -40,6 +37,12 @@ export async function requireUser(): Promise<CurrentUser> {
   const row = await get<CurrentUser>("select id, email, name, role from users where id = ?", [session.uid]);
   if (!row) redirect("/login");
   return row;
+}
+
+export async function requireAdmin(): Promise<CurrentUser> {
+  const user = await requireUser();
+  if (user.role !== "admin") forbidden();
+  return user;
 }
 
 export async function listStaff(): Promise<CurrentUser[]> {

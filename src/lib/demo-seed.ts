@@ -1,7 +1,7 @@
-import { hashSync } from "bcryptjs";
 import { CUSTOM_FIELDS, LABELS, LISTS, PRODUCTION_CHECKLIST, slugId, type MaterialKind, type StockStatus } from "@/data/board-schema";
 import { BOT_NAME, adminCredentials, isRemoteDatabase } from "./config";
 import { all, transaction } from "./db";
+import { hashPassword } from "./password";
 import { artSvg, simplePdf } from "./pdf";
 import { saveUpload } from "./storage";
 
@@ -723,7 +723,7 @@ export async function seedDemo(): Promise<{ inserted: number; skipped: boolean }
   const pending = CARDS.filter((card) => !present.has(card.id));
   if (pending.length === 0) return { inserted: 0, skipped: true };
 
-  const passwordHash = hashSync(adminCredentials().password, 8);
+  const passwordHash = hashPassword(adminCredentials().password);
   const now = "2026-11-18T15:00:00.000Z";
   const users = [
     { id: AVERY, email: "avery.chen@masten.test", name: "Avery Chen", role: "staff" },

@@ -30,7 +30,17 @@ export function LoginForm() {
           <div className="mt-6 space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" name="email" type="email" autoComplete="username" required className="min-h-10" />
+              <Input
+                id="email"
+                name="email"
+                type="email"
+                inputMode="email"
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                required
+                className="min-h-10"
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="password">Password</Label>
