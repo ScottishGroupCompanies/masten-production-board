@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ExternalLink, MoreHorizontal, Paperclip } from "lucide-react";
+import { Download, ExternalLink, MoreHorizontal, Upload } from "lucide-react";
 import { toast } from "sonner";
 import {
   archiveCard,
@@ -51,6 +51,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
   const [vendor, setVendor] = useState("");
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [uploading, setUploading] = useState<"pdf" | "photo" | null>(null);
 
   function act(work: () => Promise<Action>, message = "Saved") {
     startTransition(async () => {
@@ -62,10 +63,31 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
   }
 
   const cover = card.attachments.find((file) => file.isCover && file.mimeType.startsWith("image/"));
+  const pdfs = card.attachments.filter(isPdfAttachment);
+  const photos = card.attachments.filter((file) => !isPdfAttachment(file));
+
+  async function upload(kind: "pdf" | "photo", file: File | undefined) {
+    if (!file || uploading) return;
+    if (kind === "pdf" && file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+      toast.error("Choose a PDF file.");
+      return;
+    }
+    setUploading(kind);
+    const formData = new FormData();
+    formData.set("file", file);
+    formData.set("kind", kind);
+    const result = await uploadCardFile(card.id, formData);
+    setUploading(null);
+    if (!result.ok) toast.error(result.error ?? "Could not upload");
+    else {
+      toast.success(kind === "pdf" ? "PDF uploaded" : "Photo added");
+      router.refresh();
+    }
+  }
 
   return (
     <div className="h-full overflow-y-auto bg-[#f6f3ec] text-zinc-900">
-      <div className="relative flex h-52 items-start bg-[#e4e6e9]">
+      <div className={`relative flex items-start bg-[#e4e6e9] ${cover ? "h-52" : "h-16"}`}>
         <label className="absolute top-4 left-4 z-10">
           <span className="sr-only">Move to list</span>
           <select
@@ -96,6 +118,70 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
             {card.overdue ? <span className="rounded-full bg-red-700 px-2 py-1 text-xs font-semibold">Overdue {formatShopDate(card.dueDate)}</span> : null}
           </div>
         </div>
+
+        <section id="order-pdf" aria-labelledby="order-pdf-heading" className="rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 id="order-pdf-heading" className="text-lg font-semibold leading-snug">Order PDF</h2>
+              <p className="text-sm text-zinc-600">Upload the Lifesaver work order. PDF files only.</p>
+            </div>
+            <UploadControl
+              label={uploading === "pdf" ? "Uploading…" : "Upload PDF"}
+              accept=".pdf,application/pdf"
+              disabled={uploading !== null}
+              tone="primary"
+              onFile={(file) => upload("pdf", file)}
+            />
+          </div>
+          <ul className="mt-4 divide-y divide-zinc-200 rounded-lg border border-zinc-200">
+            {pdfs.length === 0 ? <li className="px-3 py-4 text-sm text-zinc-600">No order PDF on this card yet.</li> : null}
+            {pdfs.map((file) => (
+              <AttachmentRow
+                key={file.id}
+                file={file}
+                renaming={renameId === file.id}
+                renameValue={renameValue}
+                onRenameValue={setRenameValue}
+                onStartRename={() => { setRenameId(file.id); setRenameValue(file.filename); }}
+                onRename={() => { act(() => renameCardFile(card.id, file.id, renameValue), "Renamed"); setRenameId(null); }}
+                onRemove={() => {
+                  if (window.confirm(`Remove ${file.filename} from this card?`)) act(() => removeCardFile(card.id, file.id), "Removed");
+                }}
+              />
+            ))}
+          </ul>
+          <div className="mt-4 flex flex-col gap-3 border-t border-zinc-200 pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <h3 className="text-base font-semibold text-zinc-800">Photos</h3>
+            <UploadControl
+              label={uploading === "photo" ? "Uploading…" : "Add photo"}
+              accept="image/*"
+              disabled={uploading !== null}
+              tone="outline"
+              onFile={(file) => upload("photo", file)}
+            />
+          </div>
+          {photos.length ? (
+            <ul className="mt-3 divide-y divide-zinc-200 rounded-lg border border-zinc-200">
+              {photos.map((file) => (
+                <AttachmentRow
+                  key={file.id}
+                  file={file}
+                  renaming={renameId === file.id}
+                  renameValue={renameValue}
+                  onRenameValue={setRenameValue}
+                  onStartRename={() => { setRenameId(file.id); setRenameValue(file.filename); }}
+                  onRename={() => { act(() => renameCardFile(card.id, file.id, renameValue), "Renamed"); setRenameId(null); }}
+                  onCover={file.mimeType.startsWith("image/") ? () => act(() => makeCover(card.id, file.id), "Cover updated") : undefined}
+                  onRemove={() => {
+                    if (window.confirm(`Remove ${file.filename} from this card?`)) act(() => removeCardFile(card.id, file.id), "Removed");
+                  }}
+                />
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm text-zinc-500">No photos. A photo can be the card cover.</p>
+          )}
+        </section>
 
         <section>
           <h2 className="mb-3 text-base font-semibold text-zinc-700">Client</h2>
@@ -200,75 +286,6 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
               </div>
             ))}
           </div>
-        </section>
-
-        <section id="attachments">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="flex items-center gap-2 text-lg font-semibold leading-snug">
-              <Paperclip className="size-4 text-zinc-500" /> Attachments
-            </h2>
-            <form action={async (formData) => {
-              const result = await uploadCardFile(card.id, formData);
-              if (!result.ok) toast.error(result.error);
-              else { toast.success("Attached"); router.refresh(); }
-            }}>
-              <label className="cursor-pointer rounded-md border border-zinc-600 px-3 py-1.5 text-sm hover:bg-white/5">
-                Add
-                <input name="file" type="file" accept="application/pdf,image/*" className="sr-only" onChange={(event) => event.currentTarget.form?.requestSubmit()} />
-              </label>
-            </form>
-          </div>
-          <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200">
-            {card.attachments.length === 0 ? <li className="px-3 py-4 text-sm text-zinc-500">No files yet. The Lifesaver PDF is named with the invoice number.</li> : null}
-            {card.attachments.map((file) => {
-              const src = `/api/attachments/${file.id}`;
-              const image = file.mimeType.startsWith("image/");
-              return (
-                <li key={file.id} className="flex items-center gap-3 px-3 py-2">
-                  {image ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={src} alt="" className="size-12 rounded object-cover" />
-                  ) : (
-                    <span className="grid size-12 place-items-center rounded border border-zinc-200 bg-zinc-100 text-xs font-semibold text-zinc-800">PDF</span>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    {renameId === file.id ? (
-                      <form
-                        className="flex gap-2"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          act(() => renameCardFile(card.id, file.id, renameValue), "Renamed");
-                          setRenameId(null);
-                        }}
-                      >
-                        <Input value={renameValue} onChange={(event) => setRenameValue(event.target.value)} className="h-8 border-zinc-300 bg-white" aria-label="New file name" />
-                        <Button type="submit" size="sm">Save</Button>
-                      </form>
-                    ) : (
-                      <p className="truncate font-medium">{file.filename}</p>
-                    )}
-                    <p className="text-sm leading-snug text-zinc-600">
-                      Added {formatAdded(file.createdAt)}
-                      {file.isCover ? " · Cover" : ""}
-                    </p>
-                  </div>
-                  <a href={src} target="_blank" rel="noreferrer" aria-label={`Open ${file.filename}`} className="rounded p-2 text-zinc-700 hover:bg-zinc-100">
-                    <ExternalLink className="size-4" />
-                  </a>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger aria-label={`Actions for ${file.filename}`} className="rounded p-2 text-zinc-700 hover:bg-zinc-100">
-                      <MoreHorizontal className="size-4" />
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      {image ? <DropdownMenuItem onClick={() => act(() => makeCover(card.id, file.id), "Cover updated")}>Make cover</DropdownMenuItem> : null}
-                      <DropdownMenuItem onClick={() => { setRenameId(file.id); setRenameValue(file.filename); }}>Rename</DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => act(() => removeCardFile(card.id, file.id), "Deleted")}>Delete</DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </li>
-              );
-            })}
-          </ul>
         </section>
 
         <section>
@@ -386,6 +403,128 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         ) : null}
       </div>
     </div>
+  );
+}
+
+type AttachmentFile = CardDetail["attachments"][number];
+
+function isPdfAttachment(file: AttachmentFile) {
+  return file.mimeType === "application/pdf" || file.filename.toLowerCase().endsWith(".pdf");
+}
+
+function UploadControl({
+  label,
+  accept,
+  disabled,
+  tone,
+  onFile,
+}: {
+  label: string;
+  accept: string;
+  disabled: boolean;
+  tone: "primary" | "outline";
+  onFile: (file: File) => void;
+}) {
+  const primary = tone === "primary";
+  return (
+    <label
+      className={`inline-flex h-11 min-h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-lg px-4 text-sm font-medium sm:w-auto ${
+        disabled ? "pointer-events-none opacity-50" : ""
+      } ${primary ? "bg-primary text-primary-foreground" : "border border-zinc-300 bg-white text-zinc-900"}`}
+    >
+      <Upload className="size-4" aria-hidden />
+      {label}
+      <input
+        type="file"
+        accept={accept}
+        disabled={disabled}
+        className="sr-only"
+        onChange={(event) => {
+          const input = event.currentTarget;
+          const file = input.files?.[0];
+          input.value = "";
+          if (file) onFile(file);
+        }}
+      />
+    </label>
+  );
+}
+
+function AttachmentRow({
+  file,
+  renaming,
+  renameValue,
+  onRenameValue,
+  onStartRename,
+  onRename,
+  onCover,
+  onRemove,
+}: {
+  file: AttachmentFile;
+  renaming: boolean;
+  renameValue: string;
+  onRenameValue: (value: string) => void;
+  onStartRename: () => void;
+  onRename: () => void;
+  onCover?: () => void;
+  onRemove: () => void;
+}) {
+  const src = `/api/attachments/${file.id}`;
+  const image = file.mimeType.startsWith("image/");
+  const action = "inline-flex h-11 min-h-11 min-w-[7.5rem] flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-900 hover:bg-zinc-50 sm:flex-none";
+  return (
+    <li className="flex flex-col gap-3 px-3 py-3 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        {image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={src} alt="" className="size-12 shrink-0 rounded object-cover" />
+        ) : (
+          <span className="grid size-12 shrink-0 place-items-center rounded border border-zinc-200 bg-zinc-100 text-xs font-semibold text-zinc-800">PDF</span>
+        )}
+        <div className="min-w-0 flex-1">
+          {renaming ? (
+            <form
+              className="flex gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                onRename();
+              }}
+            >
+              <Input value={renameValue} onChange={(event) => onRenameValue(event.target.value)} className="h-11 border-zinc-300 bg-white" aria-label="New file name" />
+              <Button type="submit" className="h-11 min-h-11 px-3">Save</Button>
+            </form>
+          ) : (
+            <p className="truncate font-medium">{file.filename}</p>
+          )}
+          <p className="text-sm leading-snug text-zinc-600">
+            Added {formatAdded(file.createdAt)}
+            {file.isCover ? " · Cover" : ""}
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 sm:shrink-0">
+        <a href={src} target="_blank" rel="noreferrer" aria-label={`Open ${file.filename}`} className={action}>
+          <ExternalLink className="size-4" aria-hidden />
+          Open
+        </a>
+        <a href={`${src}?download=1`} download={file.filename} aria-label={`Download ${file.filename}`} className={action}>
+          <Download className="size-4" aria-hidden />
+          Download
+        </a>
+        <button type="button" aria-label={`Remove ${file.filename}`} className={`${action} text-red-800`} onClick={onRemove}>
+          Remove
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger aria-label={`More actions for ${file.filename}`} className="inline-flex h-11 min-h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50">
+            <MoreHorizontal className="size-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {onCover ? <DropdownMenuItem onClick={onCover}>Make cover</DropdownMenuItem> : null}
+            <DropdownMenuItem onClick={onStartRename}>Rename</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </li>
   );
 }
 

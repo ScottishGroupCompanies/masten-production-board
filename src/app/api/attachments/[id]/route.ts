@@ -11,11 +11,14 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   const file = await getAttachment(id);
   if (!file) return Response.json({ error: "Not found" }, { status: 404 });
   const bytes = await readUpload(file.storage_key);
+  const download = new URL(_request.url).searchParams.get("download") === "1";
+  const filename = file.filename.replace(/[\r\n"]/g, "");
   return new Response(new Uint8Array(bytes), {
     headers: {
       "Content-Type": file.mime_type,
-      "Content-Disposition": `inline; filename="${file.filename.replace(/"/g, "")}"`,
+      "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${filename}"`,
       "Cache-Control": "private, max-age=3600",
+      "X-Content-Type-Options": "nosniff",
     },
   });
 }

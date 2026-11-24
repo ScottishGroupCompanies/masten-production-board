@@ -48,7 +48,7 @@ function asMaterial(row: {
 
 export async function getBoard(): Promise<BoardData> {
   const today = shopToday();
-  const [lists, labels, users, cards, labelLinks, assignees, materials] = await Promise.all([
+  const [lists, labels, users, cards, labelLinks, assignees, materials, pdfRows] = await Promise.all([
     all<{ id: string; name: string; kind: string; position: number }>(
       "select id, name, kind, position from lists order by position",
     ),
@@ -59,6 +59,9 @@ export async function getBoard(): Promise<BoardData> {
     all<{ card_id: string; user_id: string }>("select card_id, user_id from card_assignees"),
     all<{ id: string; card_id: string; kind: string; item_code: string; vendor: string; stock_status: string; position: number }>(
       "select id, card_id, kind, item_code, vendor, stock_status, position from material_lines order by position",
+    ),
+    all<{ card_id: string }>(
+      "select distinct card_id from attachments where mime_type = 'application/pdf' or filename like '%.pdf'",
     ),
   ]);
   const listKind = new Map(lists.map((list) => [list.id, list.kind]));
@@ -80,6 +83,7 @@ export async function getBoard(): Promise<BoardData> {
     bucket.push({ id: user.id, name: user.name });
     peopleByCard.set(link.card_id, bucket);
   }
+  const pdfCardIds = new Set(pdfRows.map((row) => row.card_id));
   const materialsByCard = new Map<string, MaterialView[]>();
   for (const row of materials) {
     const bucket = materialsByCard.get(row.card_id) ?? [];
@@ -123,6 +127,7 @@ export async function getBoard(): Promise<BoardData> {
           assignees: peopleByCard.get(card.id) ?? [],
           materials: lines,
           needsReview: lines.some((line) => line.stockStatus === "needs_human_check"),
+          hasPdf: pdfCardIds.has(card.id),
         } satisfies BoardCard;
       })
       .sort((a, b) => a.position - b.position),
