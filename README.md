@@ -140,7 +140,23 @@ curl -s -X POST http://127.0.0.1:4471/api/intake/orders/12345/attachments \
   -F "pieceIndex=1"
 ```
 
-Sending the same filename again replaces the file.
+Sending the same filename again replaces that file. It does not change the customer, materials, list, or any other card field. `pieceIndex` is required only when the work order has more than one piece.
+
+These two production cards already have their order PDFs. The same request attaches or replaces the PDF on an existing card (set `INTAKE_API_KEY` to the production key):
+
+```bash
+curl -s -X POST "https://masten-production-board.vercel.app/api/intake/orders/26522/attachments" \
+  -H "Authorization: Bearer $INTAKE_API_KEY" \
+  -F "file=@./20242.pdf;type=application/pdf" \
+  -F "filename=20242.pdf"
+
+curl -s -X POST "https://masten-production-board.vercel.app/api/intake/orders/26523/attachments" \
+  -H "Authorization: Bearer $INTAKE_API_KEY" \
+  -F "file=@./20243.pdf;type=application/pdf" \
+  -F "filename=20243.pdf"
+```
+
+`26522` is Lifesaver Test, invoice 20242, card `3847a0ac-0023-40c1-b048-e55310695091`. `26523` is David Ferrer, invoice 20243, card `7a12d370-3289-4e12-9767-8ed14d83e06b`.
 
 ### Set stock, add a note, move the list
 

@@ -1,3 +1,16 @@
+/** A file is an order PDF when it starts with the PDF header and is named or typed as one. */
+export function isOrderPdf(filename: string, mimeType: string, bytes: Buffer): boolean {
+  if (bytes.length < 5 || bytes.subarray(0, 5).toString("latin1") !== "%PDF-") return false;
+  const mime = mimeType.trim().toLowerCase();
+  if (mime === "application/pdf" || mime === "application/x-pdf") return true;
+  if (filename.toLowerCase().endsWith(".pdf")) return true;
+  return mime === "" || mime === "application/octet-stream";
+}
+
+export function pdfFilename(filename: string): string {
+  return filename.toLowerCase().endsWith(".pdf") ? filename : `${filename}.pdf`;
+}
+
 function escapePdf(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
 }
