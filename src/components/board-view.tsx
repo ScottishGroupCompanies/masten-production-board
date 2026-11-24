@@ -18,7 +18,7 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { Archive, Plus, Search } from "lucide-react";
+import { Archive, FileText, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { archiveCard, createCard, saveOrder } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -541,6 +541,12 @@ function CardFace({
           </span>
         ))}
         {card.materials.length > 0 && problems.length === 0 && !card.needsReview ? <span className="text-xs font-medium text-emerald-800">In house</span> : null}
+        {card.hasPdf ? (
+          <span title="Order PDF attached" className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-2 py-0.5 text-xs font-semibold text-white">
+            <FileText className="size-3" aria-hidden />
+            PDF
+          </span>
+        ) : null}
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
         <div className="flex -space-x-1">

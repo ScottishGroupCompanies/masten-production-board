@@ -32,6 +32,7 @@ export type BoardCard = {
   assignees: PersonView[];
   materials: MaterialView[];
   needsReview: boolean;
+  hasPdf: boolean;
 };
 
 export type BoardData = {

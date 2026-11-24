@@ -3,6 +3,7 @@ import { CUSTOM_FIELDS, NEW_WORK_ORDERS, PRODUCTION_CHECKLIST, kindLabel, parseK
 import type { Actor, CardInput } from "./board-types";
 import { CardError } from "./board-types";
 import { get, run, transaction, type Tx } from "./db";
+import { isOrderPdf, pdfFilename } from "./pdf";
 import { removeUpload, safeFilename, saveUpload } from "./storage";
 
 async function activity(tx: Tx, cardId: string, actor: Actor, kind: string, summary: string) {
@@ -528,25 +529,40 @@ export async function addNote(cardId: string, body: string, actor: Actor) {
 
 const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif", "image/svg+xml"]);
 
-export async function attachFile(cardId: string, file: { filename: string; mimeType: string; bytes: Buffer }, actor: Actor) {
-  if (!ALLOWED_MIME.has(file.mimeType)) throw new CardError("Attach a PDF or an image.");
+function prepareAttachment(file: { filename: string; mimeType: string; bytes: Buffer }, pdfOnly: boolean) {
   if (file.bytes.length > 20 * 1024 * 1024) throw new CardError("Files must be 20 MB or smaller.");
   const filename = safeFilename(file.filename);
+  if (isOrderPdf(filename, file.mimeType, file.bytes)) {
+    return { filename: pdfFilename(filename), mimeType: "application/pdf", bytes: file.bytes };
+  }
+  if (pdfOnly) throw new CardError("Choose a PDF file (.pdf).");
+  if (!ALLOWED_MIME.has(file.mimeType)) throw new CardError("Attach a PDF or an image.");
+  return { filename, mimeType: file.mimeType, bytes: file.bytes };
+}
+
+export async function attachFile(
+  cardId: string,
+  file: { filename: string; mimeType: string; bytes: Buffer },
+  actor: Actor,
+  options?: { pdfOnly?: boolean },
+) {
+  const prepared = prepareAttachment(file, options?.pdfOnly === true);
+  const filename = prepared.filename;
   const existing = await get<{ id: string; storage_key: string }>("select id, storage_key from attachments where card_id = ? and filename = ?", [cardId, filename]);
   const storageKey = existing?.storage_key ?? `${cardId}/${randomUUID()}-${filename}`;
-  await saveUpload(storageKey, file.bytes);
+  await saveUpload(storageKey, prepared.bytes);
   await transaction(async (tx) => {
     const card = await tx.all<{ id: string }>("select id from cards where id = ?", [cardId]);
     if (!card[0]) throw new CardError("Card not found.", 404);
     if (existing) {
-      await tx.run("update attachments set mime_type = ?, byte_size = ?, created_at = ? where id = ?", [file.mimeType, file.bytes.length, new Date().toISOString(), existing.id]);
+      await tx.run("update attachments set mime_type = ?, byte_size = ?, created_at = ? where id = ?", [prepared.mimeType, prepared.bytes.length, new Date().toISOString(), existing.id]);
       await activity(tx, cardId, actor, "attachment", `${actor.name} replaced ${filename}.`);
     } else {
       const covers = await tx.all<{ id: string }>("select id from attachments where card_id = ? and is_cover = 1", [cardId]);
-      const isCover = file.mimeType.startsWith("image/") && covers.length === 0 ? 1 : 0;
+      const isCover = prepared.mimeType.startsWith("image/") && covers.length === 0 ? 1 : 0;
       await tx.run(
         "insert into attachments (id, card_id, filename, mime_type, byte_size, storage_key, is_cover, created_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
-        [randomUUID(), cardId, filename, file.mimeType, file.bytes.length, storageKey, isCover, new Date().toISOString()],
+        [randomUUID(), cardId, filename, prepared.mimeType, prepared.bytes.length, storageKey, isCover, new Date().toISOString()],
       );
       await activity(tx, cardId, actor, "attachment", `${actor.name} attached ${filename}.`);
     }

@@ -140,11 +140,13 @@ export async function uploadCardFile(cardId: string, formData: FormData) {
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) return { ok: false as const, error: "Choose a file first." };
   const bytes = Buffer.from(await file.arrayBuffer());
+  const pdfOnly = String(formData.get("kind") ?? "") === "pdf";
   return run(cardId, () =>
     writes.attachFile(
       cardId,
       { filename: file.name, mimeType: file.type || "application/octet-stream", bytes },
       { name: user.name, userId: user.id },
+      { pdfOnly },
     ),
   );
 }
