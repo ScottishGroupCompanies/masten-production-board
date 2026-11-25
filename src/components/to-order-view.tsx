@@ -22,15 +22,15 @@ export function ToOrderView({ lines }: { lines: OrderLine[] }) {
           <div>
             <h1 className="text-3xl font-semibold leading-snug">To order</h1>
             <p className="mt-1 max-w-2xl text-base leading-relaxed text-muted-foreground">
-              Every Not In Stock line on an open production card, grouped by vendor. This replaces the vendor card.
+              Lines that still need to be ordered, grouped by vendor. Frames are included until someone marks them in stock. Glass and foam are not, and discontinued mats are not.
             </p>
           </div>
           <div className="flex gap-2">
             <Button variant={showOrdered ? "outline" : "default"} onClick={() => setShowOrdered(false)}>
-              Not in stock ({lines.filter((line) => line.stockStatus === "not_in_stock").length})
+              To order ({lines.filter((line) => line.stockStatus === "not_in_stock").length})
             </Button>
             <Button variant={showOrdered ? "default" : "outline"} onClick={() => setShowOrdered(true)}>
-              Ordered ({lines.filter((line) => line.stockStatus === "ordered").length})
+              On order ({lines.filter((line) => line.stockStatus === "ordered").length})
             </Button>
           </div>
         </div>
@@ -38,7 +38,7 @@ export function ToOrderView({ lines }: { lines: OrderLine[] }) {
           <p className="mt-10 rounded-xl border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
             {showOrdered
               ? "Nothing is marked Ordered on an open job."
-              : "Nothing to order. Open jobs are in stock, here, or already on a vendor order."}
+              : "Nothing to order. Open jobs are in stock, here, or already on a vendor order. Glass, foam, and discontinued mats stay off this list."}
           </p>
         ) : (
           <div className="mt-6 space-y-6">
@@ -54,6 +54,7 @@ export function ToOrderView({ lines }: { lines: OrderLine[] }) {
                       <tr>
                         <th className="px-4 py-2 font-medium">Item</th>
                         <th className="px-4 py-2 font-medium">Kind</th>
+                        <th className="px-4 py-2 font-medium">Order size</th>
                         <th className="px-4 py-2 font-medium">Job</th>
                         <th className="px-4 py-2 font-medium">Due</th>
                         <th className="px-4 py-2 font-medium" />
@@ -82,12 +83,14 @@ function OrderRow({ line, orderedView }: { line: OrderLine; orderedView: boolean
     <tr className="border-t">
       <td className="px-4 py-3 font-medium">{line.itemCode}</td>
       <td className="px-4 py-3">{line.kindLabel}</td>
+      <td className="px-4 py-3 font-medium">{line.orderSize}</td>
       <td className="px-4 py-3">
         <Link href={`/cards/${line.cardId}`} className="underline">{line.customerName}</Link>
         <div className="text-sm leading-snug text-zinc-600">
           {line.workOrderNumber ? `W.O.${line.workOrderNumber}` : "No W.O."}
           {line.invoiceNumber ? ` · Inv.${line.invoiceNumber}` : ""}
-          {line.pieceCount ? ` · ${line.pieceIndex}/${line.pieceCount}` : ""} {line.size}
+          {line.pieceCount ? ` · ${line.pieceIndex}/${line.pieceCount}` : ""}
+          {line.orderSize !== line.size && line.size ? ` · piece ${line.size}` : ""}
           {" · "}{line.listName}
         </div>
       </td>

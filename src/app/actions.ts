@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { findUserByEmail, passwordMatches, requireUser } from "@/lib/auth";
+import { getCard } from "@/lib/queries";
 import { CardError, type CardInput } from "@/lib/board-types";
 import { ensureDatabase } from "@/lib/seed";
 import { clearSession, setSession } from "@/lib/session";
@@ -128,6 +129,17 @@ export async function changeCheck(cardId: string, itemId: string, checked: boole
 export async function createCheckItem(cardId: string, text: string) {
   const user = await requireUser();
   return run(cardId, () => writes.addCheckItem(cardId, text, { name: user.name, userId: user.id }));
+}
+
+export async function loadCard(id: string) {
+  await ensureDatabase();
+  await requireUser();
+  return getCard(id);
+}
+
+export async function saveWorkingNotes(cardId: string, body: string) {
+  await requireUser();
+  return run(cardId, () => writes.saveWorkingNotes(cardId, body));
 }
 
 export async function createNote(cardId: string, body: string) {

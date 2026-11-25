@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Download, ExternalLink, MoreHorizontal, Upload } from "lucide-react";
@@ -14,7 +14,6 @@ import {
   changeMaterialStatus,
   createCheckItem,
   createMaterial,
-  createNote,
   editMaterial,
   makeCover,
   moveCardTo,
@@ -22,6 +21,7 @@ import {
   removeMaterial,
   renameCardFile,
   saveCard,
+  saveWorkingNotes,
   uploadCardFile,
 } from "@/app/actions";
 import { Button } from "@/components/ui/button";
@@ -35,16 +35,24 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { MATERIAL_KINDS, STOCK_STATUSES, kindLabel, statusLabel } from "@/data/board-schema";
+import { CUSTOM_FIELD_KIND, MATERIAL_KINDS, STOCK_STATUSES, kindLabel, statusLabel } from "@/data/board-schema";
+import { tidyContact } from "@/lib/contact";
 import type { BoardData, CardDetail, MaterialView } from "@/lib/board-types";
 import { formatAdded, formatShopDate, formatStamp, initials } from "@/lib/format";
 
 type Action = { ok: boolean; error?: string };
 
-export function CardDetailView({ card, board }: { card: CardDetail; board: BoardData }) {
+export function CardDetailView({
+  card,
+  board,
+  onOpenCard,
+}: {
+  card: CardDetail;
+  board: BoardData;
+  onOpenCard?: (id: string) => void;
+}) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [note, setNote] = useState("");
   const [itemText, setItemText] = useState("");
   const [kind, setKind] = useState("top_mat");
   const [itemCode, setItemCode] = useState("");
@@ -114,10 +122,18 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h1 className="text-2xl leading-snug font-semibold">{card.title}</h1>
           <div className="flex gap-2">
-            {card.needsReview ? <span className="rounded-full bg-amber-500 px-2 py-1 text-xs font-semibold text-black">Needs review</span> : null}
-            {card.overdue ? <span className="rounded-full bg-red-700 px-2 py-1 text-xs font-semibold">Overdue {formatShopDate(card.dueDate)}</span> : null}
+            {card.overdue ? <span className="rounded-full bg-red-700 px-2 py-1 text-xs font-semibold text-white">Overdue {formatShopDate(card.dueDate)}</span> : null}
           </div>
         </div>
+        <p className="text-sm text-zinc-600">
+          {card.phone ? <span>{card.phone}</span> : null}
+          {card.email ? (
+            <>
+              {card.phone ? " · " : null}
+              <a className="text-sky-800 underline" href={`mailto:${card.email}`}>{card.email}</a>
+            </>
+          ) : null}
+        </p>
 
         <section id="order-pdf" aria-labelledby="order-pdf-heading" className="rounded-xl border border-zinc-300 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -195,6 +211,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
                 saveCard(card.id, {
                   customerName: String(data.get("customer") ?? ""),
                   phone: String(data.get("phone") ?? ""),
+                  email: String(data.get("email") ?? ""),
                   workOrderNumber: workOrder || null,
                   invoiceNumber: String(data.get("invoice") ?? ""),
                   pieceIndex: Number(data.get("piece") || 1),
@@ -215,7 +232,8 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
           >
             <DarkField name="customer" label="Customer" defaultValue={card.customerName} required className="sm:col-span-2" />
             <DarkField name="phone" label="Phone" defaultValue={card.phone} />
-            <DarkField name="size" label="Size" defaultValue={card.size} />
+            <DarkField name="email" label="Email" type="email" defaultValue={card.email} />
+            <DarkField name="size" label="Dimensions" defaultValue={card.size} />
             <DarkField name="workOrder" label="W.O. #" defaultValue={card.workOrderNumber ?? ""} />
             <DarkField name="invoice" label="Invoice #" defaultValue={card.invoiceNumber ?? ""} />
             <DarkField name="piece" label="Piece" defaultValue={String(card.pieceIndex ?? 1)} />
@@ -226,8 +244,23 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
             <DarkArea name="artDescription" label="Art Description" defaultValue={card.artDescription} />
             <DarkArea name="artLocation" label="Art Location" defaultValue={card.artLocation} />
             <DarkArea name="artCondition" label="Art Condition" defaultValue={card.artCondition} />
-            <DarkArea name="connectedOrders" label="Connected Orders" defaultValue={card.connectedOrders} />
-            <DarkArea name="additionalContact" label="Additional Contact Info" defaultValue={card.additionalContact} />
+            <div className="space-y-2 sm:col-span-2">
+              <h3 className="text-sm font-medium text-zinc-700">Connected orders</h3>
+              {card.invoiceMates.length ? (
+                <ul className="space-y-1 text-sm">
+                  {card.invoiceMates.map((mate) => (
+                    <li key={mate.id}>
+                      <CardLink id={mate.id} onOpenCard={onOpenCard}>{mate.workOrderNumber ? `W.O. ${mate.workOrderNumber}` : mate.title}</CardLink>
+                      <span className="text-zinc-500"> · {mate.listName}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-zinc-500">No other work orders share this invoice.</p>
+              )}
+            </div>
+            <DarkArea name="connectedOrders" label="Connected order notes" defaultValue={card.connectedOrders} />
+            <DarkArea name="additionalContact" label="Additional Contact Info" defaultValue={tidyContact(card.additionalContact, card.phone, card.email).additional} />
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="customerRecord" className="text-zinc-700">Customer record</Label>
               <select id="customerRecord" name="customerRecord" defaultValue={card.customerRecordId ?? ""} className="h-10 w-full rounded-md border border-zinc-300 bg-white px-2 text-sm">
@@ -237,9 +270,9 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
                 ))}
               </select>
               {card.customerRecordId ? (
-                <Link href={`/cards/${card.customerRecordId}`} className="text-sm text-sky-800 underline">
+                <CardLink id={card.customerRecordId} onOpenCard={onOpenCard}>
                   Open {card.customerRecordName} on the Master Customer List
-                </Link>
+                </CardLink>
               ) : null}
             </div>
             <div className="flex gap-2 sm:col-span-2">
@@ -251,56 +284,47 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
           </form>
         </section>
 
-        <section id="custom-fields">
-          <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold leading-snug">
-            <span className="text-zinc-500">#</span> Custom Fields
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {card.fields.map((field) => (
-              <div key={field.id} className="space-y-1.5">
-                <Label className="text-zinc-700">{field.name}</Label>
-                {field.options.length === 0 ? (
-                  <Input
-                    type="number"
-                    min={0}
-                    defaultValue={field.value}
-                    aria-label={field.name}
-                    className="h-10 border-zinc-300 bg-white text-zinc-900"
-                    onBlur={(event) => {
-                      if (event.target.value !== field.value) act(() => changeField(card.id, field.id, event.target.value));
-                    }}
-                  />
-                ) : (
-                  <select
-                    aria-label={field.name}
-                    value={field.value}
-                    onChange={(event) => act(() => changeField(card.id, field.id, event.target.value))}
-                    className={`h-10 w-full rounded-md border px-2 text-sm ${toneClass(field.value)}`}
-                  >
-                    <option value="">Select...</option>
-                    {field.options.map((option) => (
-                      <option key={option} value={option}>{option}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section>
+        <section id="materials">
           <h2 className="mb-3 text-lg font-semibold leading-snug">Materials</h2>
-          <div className="space-y-2">
-            {card.materials.map((line) => (
-              <MaterialRow
-                key={line.id}
-                line={line}
-                onChange={(status) => act(() => changeMaterialStatus(line.id, status, card.id))}
-                onEdit={(input) => act(() => editMaterial(card.id, line.id, input))}
-                onRemove={() => act(() => removeMaterial(card.id, line.id), "Removed")}
-              />
+          <div className="mb-4 grid gap-4 sm:grid-cols-2">
+            {card.fields.filter((field) => CUSTOM_FIELD_KIND[field.name] === "art" || CUSTOM_FIELD_KIND[field.name] === "quantity").map((field) => (
+              <FieldControl key={field.id} field={field} onChange={(value) => act(() => changeField(card.id, field.id, value))} />
             ))}
           </div>
+          <div className="space-y-2">
+            {card.materials.map((line) => {
+              const field = card.fields.find((item) => CUSTOM_FIELD_KIND[item.name] === line.kind);
+              return (
+                <MaterialRow
+                  key={line.id}
+                  line={line}
+                  field={field}
+                  onChange={(status) => act(() => changeMaterialStatus(line.id, status, card.id))}
+                  onEdit={(input) => act(() => editMaterial(card.id, line.id, input))}
+                  onField={(value) => {
+                    if (!field) return;
+                    act(() => changeField(card.id, field.id, value));
+                  }}
+                  onRemove={() => act(() => removeMaterial(card.id, line.id), "Removed")}
+                />
+              );
+            })}
+          </div>
+          {card.fields.filter((field) => {
+            const kind = CUSTOM_FIELD_KIND[field.name];
+            if (!kind || kind === "art" || kind === "quantity") return false;
+            return !card.materials.some((line) => line.kind === kind);
+          }).length ? (
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              {card.fields.filter((field) => {
+                const kind = CUSTOM_FIELD_KIND[field.name];
+                if (!kind || kind === "art" || kind === "quantity") return false;
+                return !card.materials.some((line) => line.kind === kind);
+              }).map((field) => (
+                <FieldControl key={field.id} field={field} onChange={(value) => act(() => changeField(card.id, field.id, value))} />
+              ))}
+            </div>
+          ) : null}
           <form
             className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_1fr_auto]"
             onSubmit={(event) => {
@@ -322,16 +346,11 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
 
         <section>
           <h2 className="mb-3 text-lg font-semibold leading-snug">Labels and people</h2>
-          <div className="flex flex-wrap gap-1.5">
-            {board.labels.map((label) => {
-              const on = card.labels.some((item) => item.id === label.id);
-              return (
-                <button key={label.id} type="button" onClick={() => act(() => changeLabel(card.id, label.id), on ? "Label removed" : "Label added")} className="rounded-full border px-2.5 py-1 text-sm leading-snug" style={{ borderColor: label.color, background: on ? `${label.color}55` : "transparent" }}>
-                  {label.name}
-                </button>
-              );
-            })}
-          </div>
+          <LabelPicker
+            labels={board.labels}
+            selected={card.labels}
+            onToggle={(labelId, on) => act(() => changeLabel(card.id, labelId), on ? "Label removed" : "Label added")}
+          />
           <div className="mt-3 flex flex-wrap gap-2">
             {board.users.map((user) => {
               const on = card.assignees.some((person) => person.id === user.id);
@@ -364,10 +383,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
 
         <section>
           <h2 className="mb-3 text-lg font-semibold leading-snug">Notes</h2>
-          <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); act(() => createNote(card.id, note), "Note added"); setNote(""); }}>
-            <Textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="What should the next person know?" className="border-zinc-300 bg-white" />
-            <Button type="submit" disabled={!note.trim()}>Add note</Button>
-          </form>
+          <WorkingNotes cardId={card.id} value={card.workingNotes} />
           <ul className="mt-4 space-y-3">
             {card.notes.length === 0 ? <li className="text-sm text-zinc-500">No notes yet.</li> : null}
             {card.notes.map((entry) => (
@@ -396,7 +412,7 @@ export function CardDetailView({ card, board }: { card: CardDetail; board: Board
             <h2 className="mb-2 text-lg font-semibold leading-snug">Other pieces</h2>
             <ul className="space-y-1 text-sm">
               {card.siblings.map((sibling) => (
-                <li key={sibling.id}><Link className="text-sky-800 underline" href={`/cards/${sibling.id}`}>{sibling.title}</Link> · {sibling.listName}</li>
+                <li key={sibling.id}><CardLink id={sibling.id} onOpenCard={onOpenCard}>{sibling.title}</CardLink> · {sibling.listName}</li>
               ))}
             </ul>
           </section>
@@ -562,9 +578,23 @@ function DarkArea({ name, label, defaultValue }: { name: string; label: string; 
   );
 }
 
-function MaterialRow({ line, onChange, onEdit, onRemove }: { line: MaterialView; onChange: (status: string) => void; onEdit: (input: { itemCode: string; vendor: string; kind: string }) => void; onRemove: () => void }) {
+function MaterialRow({
+  line,
+  field,
+  onChange,
+  onEdit,
+  onField,
+  onRemove,
+}: {
+  line: MaterialView;
+  field?: CardDetail["fields"][number];
+  onChange: (status: string) => void;
+  onEdit: (input: { itemCode: string; vendor: string; kind: string }) => void;
+  onField: (value: string) => void;
+  onRemove: () => void;
+}) {
   return (
-    <div className="grid gap-2 rounded-lg border border-zinc-200 p-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr_auto]">
+    <div className="grid gap-2 rounded-lg border border-zinc-200 p-2 sm:grid-cols-2">
       <select aria-label="Kind" defaultValue={line.kind} className="h-10 rounded-md border border-zinc-300 bg-white px-2 text-sm" onChange={(event) => onEdit({ kind: event.target.value, itemCode: line.itemCode, vendor: line.vendor })}>
         {MATERIAL_KINDS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
       </select>
@@ -573,7 +603,121 @@ function MaterialRow({ line, onChange, onEdit, onRemove }: { line: MaterialView;
       <select aria-label={`${kindLabel(line.kind)} stock status`} value={line.stockStatus} onChange={(event) => onChange(event.target.value)} className="h-10 rounded-md border border-zinc-300 bg-white px-2 text-sm">
         {STOCK_STATUSES.map((status) => <option key={status.id} value={status.id}>{statusLabel(status.id)}</option>)}
       </select>
-      <Button type="button" variant="ghost" className="text-zinc-800" onClick={onRemove}>Remove</Button>
+      {field && field.options.length ? (
+        <select aria-label={`${field.name} shop status`} value={field.value} onChange={(event) => onField(event.target.value)} className={`h-10 rounded-md border px-2 text-sm sm:col-span-2 ${toneClass(field.value)}`}>
+          <option value="">Shop status…</option>
+          {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+      ) : null}
+      <Button type="button" variant="ghost" className="text-zinc-800 sm:col-span-2 sm:justify-self-start" onClick={onRemove}>Remove</Button>
+    </div>
+  );
+}
+
+function FieldControl({ field, onChange }: { field: CardDetail["fields"][number]; onChange: (value: string) => void }) {
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-zinc-700">{field.name}</Label>
+      {field.options.length === 0 ? (
+        <Input
+          type="number"
+          min={0}
+          defaultValue={field.value}
+          aria-label={field.name}
+          className="h-10 border-zinc-300 bg-white text-zinc-900"
+          onBlur={(event) => {
+            if (event.target.value !== field.value) onChange(event.target.value);
+          }}
+        />
+      ) : (
+        <select aria-label={field.name} value={field.value} onChange={(event) => onChange(event.target.value)} className={`h-10 w-full rounded-md border px-2 text-sm ${toneClass(field.value)}`}>
+          <option value="">Select...</option>
+          {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
+function CardLink({ id, onOpenCard, children }: { id: string; onOpenCard?: (id: string) => void; children: React.ReactNode }) {
+  if (onOpenCard) {
+    return (
+      <button type="button" className="text-left text-sm text-sky-800 underline" onClick={() => onOpenCard(id)}>
+        {children}
+      </button>
+    );
+  }
+  return <Link href={`/cards/${id}`} className="text-sm text-sky-800 underline">{children}</Link>;
+}
+
+function LabelPicker({
+  labels,
+  selected,
+  onToggle,
+}: {
+  labels: BoardData["labels"];
+  selected: BoardData["labels"];
+  onToggle: (id: string, on: boolean) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const selectedIds = new Set(selected.map((label) => label.id));
+  const needle = query.trim().toLowerCase();
+  const matches = needle ? labels.filter((label) => !selectedIds.has(label.id) && label.name.toLowerCase().includes(needle)) : [];
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {selected.map((label) => (
+          <button key={label.id} type="button" onClick={() => onToggle(label.id, true)} className="rounded-full border px-2.5 py-1 text-sm leading-snug" style={{ borderColor: label.color, background: `${label.color}55` }}>
+            {label.name}
+          </button>
+        ))}
+        {selected.length === 0 ? <p className="text-sm text-zinc-500">No labels yet.</p> : null}
+      </div>
+      <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search labels" aria-label="Search labels" className="h-10 border-zinc-300 bg-white" />
+      {needle ? (
+        <div className="flex flex-wrap gap-1.5">
+          {matches.length === 0 ? <p className="text-sm text-zinc-500">No label matches.</p> : null}
+          {matches.map((label) => (
+            <button key={label.id} type="button" onClick={() => { onToggle(label.id, false); setQuery(""); }} className="rounded-full border px-2.5 py-1 text-sm leading-snug" style={{ borderColor: label.color }}>
+              {label.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function WorkingNotes({ cardId, value }: { cardId: string; value: string }) {
+  const [text, setText] = useState(value);
+  const [state, setState] = useState<"saved" | "saving">("saved");
+  const saved = useRef(value);
+  const dirty = useRef(false);
+  useEffect(() => {
+    if (!dirty.current && value !== saved.current) {
+      saved.current = value;
+      setText(value);
+    }
+  }, [value]);
+  useEffect(() => {
+    if (text === saved.current) return;
+    dirty.current = true;
+    setState("saving");
+    const handle = window.setTimeout(() => {
+      void saveWorkingNotes(cardId, text).then((result) => {
+        if (result.ok) {
+          saved.current = text;
+          dirty.current = false;
+          setState("saved");
+        }
+      });
+    }, 700);
+    return () => window.clearTimeout(handle);
+  }, [text, cardId]);
+  return (
+    <div className="space-y-1">
+      <Textarea value={text} onChange={(event) => setText(event.target.value)} placeholder="What should the next person know?" aria-label="Notes" className="border-zinc-300 bg-white" />
+      <p className="text-xs text-zinc-500">{state === "saving" ? "Saving…" : "Saved"}</p>
     </div>
   );
 }

@@ -1,11 +1,12 @@
 import { randomUUID } from "crypto";
 import { CUSTOM_FIELDS, LABELS, LISTS, slugId } from "@/data/board-schema";
+import { normalizePackMaterials, removeProductionChecklists, removeUnusedLists, renameRedoList } from "./board-maintenance";
 import { adminCredentials, assertProductionConfig } from "./config";
 import { ensureReady, migrate, transaction } from "./db";
 import { hashPassword } from "./password";
 
 export async function seedCatalog(): Promise<{ adminCreated: boolean }> {
-  if (LISTS.length !== 25) throw new Error(`Expected 25 lists, found ${LISTS.length}`);
+  if (LISTS.length !== 19) throw new Error(`Expected 19 lists, found ${LISTS.length}`);
   if (LABELS.length !== 50) throw new Error(`Expected 50 labels, found ${LABELS.length}`);
   if (CUSTOM_FIELDS.length !== 15) throw new Error(`Expected 15 custom fields, found ${CUSTOM_FIELDS.length}`);
 
@@ -92,6 +93,10 @@ export function ensureDatabase(): Promise<void> {
   return ensureReady(async () => {
     if (process.env.NEXT_PHASE !== "phase-production-build") assertProductionConfig();
     await migrate();
+    await renameRedoList();
     await seedCatalog();
+    await removeUnusedLists();
+    await removeProductionChecklists();
+    await normalizePackMaterials();
   });
 }

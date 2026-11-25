@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -p 4471 -H 0.0.0.0",
     "lint": "eslint",
-    "test": "tsx --test src/lib/d1.test.ts src/lib/pdf.test.ts src/lib/users.test.ts",
+    "test": "tsx --test src/lib/d1.test.ts src/lib/pdf.test.ts src/lib/users.test.ts src/lib/stock.test.ts",
     "db:reset": "tsx scripts/reset-db.ts",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed:demo": "tsx scripts/seed-demo.ts",

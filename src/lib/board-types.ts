@@ -27,16 +27,19 @@ export type BoardCard = {
   size: string;
   dueDate: string | null;
   startDate: string | null;
+  createdAt: string;
+  email: string;
   overdue: boolean;
   labels: LabelView[];
   assignees: PersonView[];
   materials: MaterialView[];
-  needsReview: boolean;
+  coverAttachmentId: string | null;
   hasPdf: boolean;
 };
 
 export type BoardData = {
   today: string;
+  revision: string;
   lists: { id: string; name: string; kind: string; position: number }[];
   labels: LabelView[];
   users: { id: string; name: string; email: string; role: string }[];
@@ -52,6 +55,7 @@ export type CardDetail = BoardCard & {
   artCondition: string;
   connectedOrders: string;
   additionalContact: string;
+  workingNotes: string;
   customerRecordId: string | null;
   customerRecordName: string | null;
   fields: { id: string; name: string; value: string; options: string[] }[];
@@ -60,6 +64,7 @@ export type CardDetail = BoardCard & {
   attachments: { id: string; filename: string; mimeType: string; byteSize: number; createdAt: string; isCover: boolean }[];
   activity: { id: string; actorName: string; kind: string; summary: string; createdAt: string }[];
   siblings: { id: string; title: string; listName: string; pieceIndex: number | null }[];
+  invoiceMates: { id: string; title: string; listName: string; workOrderNumber: string | null }[];
   linkedOrders: { id: string; title: string; listName: string }[];
   customerRecords: { id: string; name: string }[];
 };
@@ -78,6 +83,7 @@ export type OrderLine = {
   pieceIndex: number | null;
   pieceCount: number | null;
   size: string;
+  orderSize: string;
   dueDate: string | null;
   overdue: boolean;
   listName: string;
@@ -92,11 +98,13 @@ export type CardInput = {
   forceList?: boolean;
   customerName: string;
   phone?: string;
+  email?: string;
   workOrderNumber?: string | null;
   invoiceNumber?: string | null;
   pieceIndex?: number | null;
   pieceCount?: number | null;
   size?: string;
+  dimensions?: string;
   dueDate?: string | null;
   startDate?: string | null;
   sharedMats?: string;
@@ -109,7 +117,7 @@ export type CardInput = {
   labelNames?: string[];
   assigneeEmails?: string[];
   customFields?: Record<string, string>;
-  materials?: { kind: string; itemCode: string; vendor?: string; stockStatus?: string }[];
+  materials?: { kind: string; itemCode: string; vendor?: string; stockStatus?: string; description?: string }[];
   replaceMaterials?: boolean;
   ensureDefaults?: boolean;
 };

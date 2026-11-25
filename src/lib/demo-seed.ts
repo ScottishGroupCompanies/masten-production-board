@@ -1,4 +1,4 @@
-import { CUSTOM_FIELDS, LABELS, LISTS, PRODUCTION_CHECKLIST, slugId, type MaterialKind, type StockStatus } from "@/data/board-schema";
+import { CUSTOM_FIELDS, LABELS, LISTS, slugId, type MaterialKind, type StockStatus } from "@/data/board-schema";
 import { BOT_NAME, adminCredentials, isRemoteDatabase } from "./config";
 import { all, transaction } from "./db";
 import { hashPassword } from "./password";
@@ -181,7 +181,7 @@ const CARDS: SeedCard[] = [
   },
   {
     id: "card-ruth",
-    list: "Past Due - PRIORITY",
+    list: "Stalled",
     customerName: "Ruth Adelman",
     phone: "303-555-0162",
     workOrderNumber: "50810",
@@ -428,7 +428,7 @@ const CARDS: SeedCard[] = [
   },
   {
     id: "card-elena-1",
-    list: "Measure Stacked Frame",
+    list: "Special Orders",
     customerName: "Elena Vasquez",
     phone: "303-555-0174",
     workOrderNumber: "51021",
@@ -473,7 +473,7 @@ const CARDS: SeedCard[] = [
       { author: "Priya Nandakumar", userId: PRIYA, body: "Mats are cut. Luis has the left panel on the bench.", at: "2026-11-17T21:10:00.000Z" },
     ],
     activity: [
-      { actor: "Jordan Hale", userId: JORDAN, kind: "moved", summary: "Jordan Hale moved this from On Order Sheet to Measure Stacked Frame.", at: "2026-11-16T15:00:00.000Z" },
+      { actor: "Jordan Hale", userId: JORDAN, kind: "moved", summary: "Jordan Hale moved this from On Order Sheet to Special Orders.", at: "2026-11-16T15:00:00.000Z" },
     ],
   },
   {
@@ -509,7 +509,7 @@ const CARDS: SeedCard[] = [
   },
   {
     id: "card-elena-3",
-    list: "Reed Projects",
+    list: "XStitch/Special Mount/Repairs",
     customerName: "Elena Vasquez",
     phone: "303-555-0174",
     workOrderNumber: "51021",
@@ -568,7 +568,7 @@ const CARDS: SeedCard[] = [
   },
   {
     id: "card-chris",
-    list: "Jersey Re-Do's",
+    list: "Re-do's",
     customerName: "Chris Daley",
     phone: "720-555-0194",
     workOrderNumber: "50770",
@@ -669,7 +669,7 @@ const CARDS: SeedCard[] = [
   },
   {
     id: "card-text",
-    list: "Text Messages",
+    list: "Sales Leads",
     customerName: "Text · Elena Vasquez",
     phone: "303-555-0174",
     artDescription: "Thread about the triptych pickup.",
@@ -681,7 +681,7 @@ const CARDS: SeedCard[] = [
   },
   {
     id: "card-estimate",
-    list: "Estimates/Quotes",
+    list: "Sales Leads",
     customerName: "Estimate · Northfield condo",
     phone: "303-555-0130",
     labels: ["Estimate", "Warm Lead"],
@@ -839,21 +839,6 @@ export async function seedDemo(): Promise<{ inserted: number; skipped: boolean }
           "insert into material_lines (id, card_id, position, kind, item_code, vendor, stock_status) values (?, ?, ?, ?, ?, ?, ?)",
           [`${card.id}-m${index}`, card.id, index, line.kind, line.itemCode, line.vendor, line.stockStatus],
         );
-      }
-      if (card.workOrderNumber || card.checked !== undefined) {
-        const checklistId = `${card.id}-check`;
-        await tx.run("insert into checklists (id, card_id, title, position) values (?, ?, ?, ?)", [
-          checklistId,
-          card.id,
-          PRODUCTION_CHECKLIST.title,
-          0,
-        ]);
-        for (const [index, text] of PRODUCTION_CHECKLIST.items.entries()) {
-          await tx.run(
-            "insert into checklist_items (id, checklist_id, text, checked, position) values (?, ?, ?, ?, ?)",
-            [`${checklistId}-${index}`, checklistId, text, index < (card.checked ?? 0) ? 1 : 0, index],
-          );
-        }
       }
       for (const [index, note] of (card.notes ?? []).entries()) {
         await tx.run(

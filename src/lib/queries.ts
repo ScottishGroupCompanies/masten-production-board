@@ -1,6 +1,8 @@
 import { kindLabel, type MaterialKind, type StockStatus } from "@/data/board-schema";
+import { discontinuedStemSet } from "./discontinued";
 import { all, get } from "./db";
 import { cardTitle, isOverdue, shopToday } from "./format";
+import { isOrderableKind, matchesDiscontinued, orderSizeFor } from "./stock";
 import type { BoardCard, BoardData, CardDetail, MaterialView, OrderLine } from "./board-types";
 
 type CardRow = {
@@ -10,6 +12,7 @@ type CardRow = {
   archived: number;
   customer_name: string;
   phone: string;
+  email?: string;
   work_order_number: string | null;
   invoice_number: string | null;
   piece_index: number | null;
@@ -23,7 +26,9 @@ type CardRow = {
   art_condition: string;
   connected_orders: string;
   additional_contact: string;
+  working_notes?: string;
   customer_record_id: string | null;
+  created_at?: string;
   list_name?: string;
   list_kind?: string;
 };
@@ -48,7 +53,7 @@ function asMaterial(row: {
 
 export async function getBoard(): Promise<BoardData> {
   const today = shopToday();
-  const [lists, labels, users, cards, labelLinks, assignees, materials, pdfRows] = await Promise.all([
+  const [lists, labels, users, cards, labelLinks, assignees, materials, pdfRows, covers, revisionRow, meta] = await Promise.all([
     all<{ id: string; name: string; kind: string; position: number }>(
       "select id, name, kind, position from lists order by position",
     ),
@@ -63,6 +68,11 @@ export async function getBoard(): Promise<BoardData> {
     all<{ card_id: string }>(
       "select distinct card_id from attachments where mime_type = 'application/pdf' or filename like '%.pdf'",
     ),
+    all<{ id: string; card_id: string; mime_type: string }>(
+      "select id, card_id, mime_type from attachments where is_cover = 1",
+    ),
+    get<{ revision: string | null; n: number | bigint }>("select max(updated_at) as revision, count(*) as n from cards"),
+    get<{ value: string }>("select value from meta where key = ?", ["board_revision"]),
   ]);
   const listKind = new Map(lists.map((list) => [list.id, list.kind]));
   const labelById = new Map(labels.map((label) => [label.id, label]));
@@ -84,6 +94,10 @@ export async function getBoard(): Promise<BoardData> {
     peopleByCard.set(link.card_id, bucket);
   }
   const pdfCardIds = new Set(pdfRows.map((row) => row.card_id));
+  const coverByCard = new Map<string, string>();
+  for (const cover of covers) {
+    if (cover.mime_type.startsWith("image/")) coverByCard.set(cover.card_id, cover.id);
+  }
   const materialsByCard = new Map<string, MaterialView[]>();
   for (const row of materials) {
     const bucket = materialsByCard.get(row.card_id) ?? [];
@@ -92,6 +106,7 @@ export async function getBoard(): Promise<BoardData> {
   }
   return {
     today,
+    revision: `${revisionRow?.revision ?? ""}:${Number(revisionRow?.n ?? 0)}:${meta?.value ?? ""}`,
     lists,
     labels,
     users,
@@ -122,11 +137,13 @@ export async function getBoard(): Promise<BoardData> {
           size: card.size,
           dueDate: card.due_date,
           startDate: card.start_date,
+          createdAt: card.created_at ?? "",
+          email: card.email ?? "",
           overdue: isOverdue(card.due_date, listKind.get(card.list_id) ?? "production", archived, today),
           labels: labelsByCard.get(card.id) ?? [],
           assignees: peopleByCard.get(card.id) ?? [],
           materials: lines,
-          needsReview: lines.some((line) => line.stockStatus === "needs_human_check"),
+          coverAttachmentId: coverByCard.get(card.id) ?? null,
           hasPdf: pdfCardIds.has(card.id),
         } satisfies BoardCard;
       })
@@ -192,6 +209,15 @@ export async function getCard(id: string): Promise<CardDetail | null> {
         [row.work_order_number, id],
       )
     : [];
+  const invoiceMates = row.invoice_number
+    ? await all<CardRow & { list_name: string }>(
+        `select cards.*, lists.name as list_name from cards join lists on lists.id = cards.list_id
+         where cards.invoice_number = ? and cards.id != ?
+           and (cards.work_order_number is null or cards.work_order_number != ?)
+         order by cards.work_order_number, cards.piece_index`,
+        [row.invoice_number, id, row.work_order_number ?? ""],
+      )
+    : [];
   const linked = await all<CardRow & { list_name: string }>(
     `select cards.*, lists.name as list_name from cards join lists on lists.id = cards.list_id
      where cards.customer_record_id = ? order by cards.work_order_number, cards.piece_index`,
@@ -224,6 +250,7 @@ export async function getCard(id: string): Promise<CardDetail | null> {
     artCondition: row.art_condition,
     connectedOrders: row.connected_orders,
     additionalContact: row.additional_contact,
+    workingNotes: row.working_notes ?? "",
     customerRecordId: row.customer_record_id,
     customerRecordName: customer?.customer_name ?? null,
     fields: fields.map((field) => ({
@@ -233,7 +260,7 @@ export async function getCard(id: string): Promise<CardDetail | null> {
       options: optionsByField.get(field.id) ?? [],
     })),
     notes: notes.map((note) => ({ id: note.id, authorName: note.author_name, body: note.body, createdAt: note.created_at })),
-    checklists: checklists.map((list) => ({
+    checklists: checklists.filter((list) => list.title !== "Production").map((list) => ({
       id: list.id,
       title: list.title,
       items: items
@@ -261,6 +288,12 @@ export async function getCard(id: string): Promise<CardDetail | null> {
       listName: sibling.list_name ?? "",
       pieceIndex: sibling.piece_index,
     })),
+    invoiceMates: invoiceMates.map((mate) => ({
+      id: mate.id,
+      title: titleOf(mate),
+      listName: mate.list_name ?? "",
+      workOrderNumber: mate.work_order_number,
+    })),
     linkedOrders: linked.map((order) => ({ id: order.id, title: titleOf(order), listName: order.list_name ?? "" })),
     customerRecords: customerRecords.map((record) => ({ id: record.id, name: record.customer_name })),
   };
@@ -268,6 +301,7 @@ export async function getCard(id: string): Promise<CardDetail | null> {
 
 export async function getToOrder(): Promise<{ today: string; lines: OrderLine[] }> {
   const today = shopToday();
+  const stems = await discontinuedStemSet();
   const rows = await all<{
     id: string;
     kind: string;
@@ -298,7 +332,7 @@ export async function getToOrder(): Promise<{ today: string; lines: OrderLine[] 
   );
   return {
     today,
-    lines: rows.map((row) => ({
+    lines: rows.filter((row) => isOrderableKind(row.kind) && !matchesDiscontinued(row.item_code, stems)).map((row) => ({
       materialId: row.id,
       kind: row.kind,
       kindLabel: kindLabel(row.kind),
@@ -312,6 +346,7 @@ export async function getToOrder(): Promise<{ today: string; lines: OrderLine[] 
       pieceIndex: row.piece_index,
       pieceCount: row.piece_count,
       size: row.size,
+      orderSize: orderSizeFor(row.kind, row.size),
       dueDate: row.due_date,
       overdue: isOverdue(row.due_date, row.list_kind, false, today),
       listName: row.list_name,

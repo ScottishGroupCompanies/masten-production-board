@@ -16,7 +16,8 @@ async function main() {
   ]);
   const admins = await all<{ email: string }>("select email from users where role = 'admin' order by email");
 
-  console.log("Migration finished. Existing cards were left in place.");
+  console.log("Migration finished. Cards were deleted only from the six retired lists.");
+  console.log("Retired names: Measure Stacked Frame, Past Due - PRIORITY, Reed Projects, New List, Text Messages, Estimates/Quotes.");
   console.log(`lists ${Number(lists?.n ?? 0)}`);
   console.log(`labels ${Number(labels?.n ?? 0)}`);
   console.log(`custom fields ${Number(fields?.n ?? 0)}`);

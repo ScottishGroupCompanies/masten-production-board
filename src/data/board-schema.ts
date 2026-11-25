@@ -1,7 +1,10 @@
 /**
- * Live Masten board export: 26 lists, 50 labels, 15 custom fields.
+ * Live Masten board export: shop lists, 50 labels, 15 custom fields.
  * Source file: src/data/live-board.json
- * Stock status on material lines is separate from these Trello dropdowns.
+ * Stock status on material lines is separate from the old Trello dropdowns.
+ * Six unused lists are not in this file. A startup step deletes them if a
+ * database still has them: Measure Stacked Frame, Past Due - PRIORITY,
+ * Reed Projects, New List, Text Messages, Estimates/Quotes.
  */
 
 import liveBoard from "./live-board.json";
@@ -44,12 +47,46 @@ export const MATERIAL_KINDS = [
 export type MaterialKind = (typeof MATERIAL_KINDS)[number]["id"];
 
 export const STOCK_STATUSES = [
-  { id: "in_stock", label: "In Stock", short: "In stock" },
-  { id: "not_in_stock", label: "Not In Stock", short: "Not in stock" },
-  { id: "needs_human_check", label: "Needs Human Check", short: "Check" },
-  { id: "ordered", label: "Ordered", short: "Ordered" },
+  { id: "in_stock", label: "In Stock", short: "In Stock" },
+  { id: "not_in_stock", label: "To Order", short: "To Order" },
+  { id: "needs_human_check", label: "Pending", short: "Pending" },
+  { id: "ordered", label: "On Order", short: "On Order" },
   { id: "here", label: "Here", short: "Here" },
+  { id: "discontinued_attention", label: "Discontinued – not in stock, needs attention", short: "Discontinued" },
 ] as const;
+
+/** Sheet sizes the shop actually orders. The first size the piece fits, in either orientation, wins. */
+export const MAT_ORDER_SIZES: { width: number; height: number; label: string }[] = [
+  { width: 32, height: 40, label: "32x40" },
+  { width: 40, height: 60, label: "40x60" },
+];
+
+export const TILE_MATERIALS: { kind: MaterialKind; label: string }[] = [
+  { kind: "frame", label: "Frame" },
+  { kind: "top_mat", label: "Top mat" },
+  { kind: "second_mat", label: "2nd mat" },
+  { kind: "glazing", label: "Glass" },
+  { kind: "fillet", label: "Fillets" },
+];
+
+/** Custom field name → material kind. Art and DO (Quantity) stay in the Materials section too. */
+export const CUSTOM_FIELD_KIND: Record<string, MaterialKind | "art" | "quantity"> = {
+  "DO (Quantity)": "quantity",
+  Art: "art",
+  Frame: "frame",
+  "Top Mat": "top_mat",
+  "Inner Stacked Frame": "inner_stacked_frame",
+  "Fillet(s)": "fillet",
+  "2nd Mat": "second_mat",
+  "2nd Stacked Frame": "second_stacked_frame",
+  Stretcher: "stretcher",
+  "3rd Mat": "third_mat",
+  "3rd Stacked Frame": "third_stacked_frame",
+  "Engraving / Typeset": "engraving",
+  Glazing: "glazing",
+  "Backing/Mounting": "backing",
+  Fabric: "fabric",
+};
 
 export type StockStatus = (typeof STOCK_STATUSES)[number]["id"];
 
@@ -82,6 +119,9 @@ const KIND_ALIASES: Record<string, MaterialKind> = {
   mounting: "backing",
   "backing/mounting": "backing",
   "backing / mounting": "backing",
+  foam: "backing",
+  foamcore: "backing",
+  "foam core": "backing",
   stretcher: "stretcher",
   fabric: "fabric",
   engraving: "engraving",
@@ -97,8 +137,17 @@ const STATUS_ALIASES: Record<string, StockStatus> = {
   "not in stock": "not_in_stock",
   needs_human_check: "needs_human_check",
   "needs human check": "needs_human_check",
+  pending: "needs_human_check",
   ordered: "ordered",
+  "on order": "ordered",
+  on_order: "ordered",
   here: "here",
+  to_order: "not_in_stock",
+  "to order": "not_in_stock",
+  discontinued: "discontinued_attention",
+  discontinued_attention: "discontinued_attention",
+  "discontinued – not in stock, needs attention": "discontinued_attention",
+  "discontinued - not in stock, needs attention": "discontinued_attention",
 };
 
 export function parseKind(value: string): MaterialKind | null {
@@ -122,23 +171,17 @@ export function statusShort(status: string): string {
 }
 
 export function defaultStatus(kind: string): StockStatus {
-  const found = MATERIAL_KINDS.find((item) => item.id === kind);
-  if (found?.checkByDefault) return "needs_human_check";
+  if (
+    kind === "frame" ||
+    kind === "inner_stacked_frame" ||
+    kind === "second_stacked_frame" ||
+    kind === "third_stacked_frame"
+  ) {
+    return "not_in_stock";
+  }
+  if (kind === "glazing" || kind === "backing") return "in_stock";
   return "needs_human_check";
 }
-
-export const PRODUCTION_CHECKLIST = {
-  title: "Production",
-  items: [
-    "Art received and photographed",
-    "Materials checked against stock",
-    "Mats cut",
-    "Frame joined",
-    "Glazing cut",
-    "Fitted, wired, and bumpers on",
-    "Customer notified",
-  ],
-};
 
 export type CustomFieldType = "list" | "number";
 
