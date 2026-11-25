@@ -1,10 +1,13 @@
 import { randomUUID } from "crypto";
-import { CUSTOM_FIELDS, NEW_WORK_ORDERS, PRODUCTION_CHECKLIST, kindLabel, parseKind, parseStatus, statusLabel, type MaterialKind, type StockStatus } from "@/data/board-schema";
+import { CUSTOM_FIELDS, NEW_WORK_ORDERS, kindLabel, parseKind, parseStatus, statusLabel, type MaterialKind, type StockStatus } from "@/data/board-schema";
 import type { Actor, CardInput } from "./board-types";
 import { CardError } from "./board-types";
+import { tidyContact } from "./contact";
+import { discontinuedStemSet } from "./discontinued";
 import { get, run, transaction, type Tx } from "./db";
 import { isOrderPdf, pdfFilename } from "./pdf";
 import { removeUpload, safeFilename, saveUpload } from "./storage";
+import { coerceStatus, defaultStatusFor, descriptionSaysDiscontinued, discontinuedStems, resolveDimensions } from "./stock";
 
 async function activity(tx: Tx, cardId: string, actor: Actor, kind: string, summary: string) {
   await tx.run(
@@ -18,28 +21,35 @@ function isUnique(error: unknown) {
 }
 
 export function normalizeMaterials(
-  lines: { kind: string; itemCode: string; vendor?: string; stockStatus?: string }[] | undefined,
+  lines: { kind: string; itemCode: string; vendor?: string; stockStatus?: string; description?: string }[] | undefined,
   ensureDefaults: boolean,
+  stems: Set<string> = new Set(),
 ) {
   const parsed = (lines ?? []).map((line) => {
     const kind = parseKind(line.kind);
     if (!kind) throw new CardError(`Unknown material kind "${line.kind}".`);
     const stockStatus = line.stockStatus ? parseStatus(line.stockStatus) : null;
     if (line.stockStatus && !stockStatus) throw new CardError(`Unknown stock status "${line.stockStatus}".`);
-    const status: StockStatus = stockStatus ?? "needs_human_check";
-    return { kind, itemCode: line.itemCode.trim(), vendor: (line.vendor ?? "").trim(), stockStatus: status };
+    const status: StockStatus = stockStatus ?? defaultStatusFor(kind);
+    const itemCode = line.itemCode.trim();
+    const discontinued = descriptionSaysDiscontinued(line.description);
+    const lineStems = discontinued ? new Set([...stems, ...discontinuedStems([itemCode])]) : stems;
+    return {
+      kind,
+      itemCode,
+      vendor: (line.vendor ?? "").trim(),
+      stockStatus: coerceStatus(kind, itemCode, status, lineStems),
+      recordDiscontinued: discontinued,
+    };
   });
   if (ensureDefaults && !parsed.some((line) => line.kind === "frame")) {
-    parsed.unshift({ kind: "frame", itemCode: "Unspecified", vendor: "", stockStatus: "needs_human_check" });
+    parsed.unshift({ kind: "frame", itemCode: "Unspecified", vendor: "", stockStatus: "not_in_stock", recordDiscontinued: false });
   }
   if (ensureDefaults && !parsed.some((line) => line.kind === "glazing")) {
-    parsed.push({ kind: "glazing", itemCode: "Unspecified", vendor: "", stockStatus: "needs_human_check" });
+    parsed.push({ kind: "glazing", itemCode: "Unspecified", vendor: "", stockStatus: "in_stock", recordDiscontinued: false });
   }
   for (const line of parsed) {
     if (!line.itemCode) throw new CardError("Every material line needs an item code.");
-    if ((line.kind === "frame" || line.kind === "glazing") && !lines?.find((raw) => parseKind(raw.kind) === line.kind && raw.stockStatus)) {
-      line.stockStatus = "needs_human_check";
-    }
   }
   return parsed;
 }
@@ -140,24 +150,25 @@ async function writeChildren(
   }
 }
 
-async function queueChecklist(tx: Tx, cardId: string) {
-  const checklistId = randomUUID();
-  await tx.run("insert into checklists (id, card_id, title, position) values (?, ?, ?, 0)", [checklistId, cardId, PRODUCTION_CHECKLIST.title]);
-  for (const [index, text] of PRODUCTION_CHECKLIST.items.entries()) {
-    await tx.run("insert into checklist_items (id, checklist_id, text, checked, position) values (?, ?, ?, 0, ?)", [
-      randomUUID(),
-      checklistId,
-      text,
-      index,
-    ]);
-  }
+function contactFields(input: CardInput, existing?: { phone: string; email: string; additional: string }) {
+  const phone = input.phone === undefined ? (existing?.phone ?? "") : input.phone.trim();
+  const email = input.email === undefined ? (existing?.email ?? "") : input.email.trim();
+  const additional = input.additionalContact === undefined ? (existing?.additional ?? "") : input.additionalContact;
+  return { phone, ...tidyContact(additional, phone, email) };
+}
+
+async function rememberDiscontinued(lines: { itemCode: string; recordDiscontinued: boolean }[]) {
+  const codes = lines.filter((line) => line.recordDiscontinued).map((line) => line.itemCode);
+  if (!codes.length) return;
+  const { replaceDiscontinued } = await import("./discontinued");
+  await replaceDiscontinued(codes.map((code) => ({ code, note: "From material description" })), "add");
 }
 
 export async function createWorkCard(input: CardInput, actor: Actor) {
   const workOrder = input.workOrderNumber?.trim() || null;
   const pieceIndex = workOrder ? input.pieceIndex || 1 : null;
   try {
-    return await transaction(async (tx) => {
+    const created = await transaction(async (tx) => {
       const list = await resolveList(tx, input.listName, input.listId);
       const pieceCount = workOrder ? input.pieceCount || 1 : null;
       const id = randomUUID();
@@ -166,26 +177,34 @@ export async function createWorkCard(input: CardInput, actor: Actor) {
       const labels = await resolveLabels(tx, input.labelNames);
       const assignees = await resolveAssignees(tx, input.assigneeEmails);
       const fields = await resolveFields(tx, input.customFields);
-      const materials = normalizeMaterials(input.materials, input.ensureDefaults ?? Boolean(workOrder));
+      const stems = await discontinuedStemSet();
+      const materials = normalizeMaterials(input.materials, input.ensureDefaults ?? Boolean(workOrder), stems);
+      const contact = contactFields(input);
+      const size = resolveDimensions({
+        size: input.size,
+        dimensions: input.dimensions,
+        artDescription: input.artDescription,
+      });
       await tx.run(
         `insert into cards (
-          id, list_id, position, archived, customer_name, phone, work_order_number, invoice_number,
+          id, list_id, position, archived, customer_name, phone, email, work_order_number, invoice_number,
           piece_index, piece_count, size, due_date, start_date, shared_mats, art_description, art_location,
           art_condition, connected_orders, additional_contact, customer_record_id, created_at, updated_at
-        ) values (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        ) values (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          id, list.id, Number(positionRow[0]?.position ?? 0) + 1000, input.customerName.trim(), input.phone?.trim() ?? "",
-          workOrder, input.invoiceNumber?.trim() || null, pieceIndex, pieceCount, input.size?.trim() ?? "",
+          id, list.id, Number(positionRow[0]?.position ?? 0) + 1000, input.customerName.trim(), contact.phone, contact.email,
+          workOrder, input.invoiceNumber?.trim() || null, pieceIndex, pieceCount, size,
           input.dueDate || null, input.startDate || shopDateDefault(input.startDate), input.sharedMats ?? "",
           input.artDescription ?? "", input.artLocation ?? "", input.artCondition ?? "", input.connectedOrders ?? "",
-          input.additionalContact ?? "", input.customerRecordId || null, now, now,
+          contact.additional, input.customerRecordId || null, now, now,
         ],
       );
       await writeChildren(tx, id, labels, assignees, fields, materials);
-      if (workOrder) await queueChecklist(tx, id);
       await activity(tx, id, actor, "created", `${actor.name} created this card in ${list.name}.`);
-      return { id, listName: list.name, pieceIndex };
+      return { id, listName: list.name, pieceIndex, materials };
     });
+    await rememberDiscontinued(created.materials);
+    return { id: created.id, listName: created.listName, pieceIndex: created.pieceIndex };
   } catch (error) {
     if (isUnique(error)) throw new CardError(`Work order ${workOrder} piece ${pieceIndex} already exists.`);
     throw error;
@@ -200,9 +219,9 @@ export async function updateWorkCard(id: string, input: CardInput, actor: Actor)
   let reportedOrder: string | null = null;
   let reportedPiece: number | null = null;
   try {
-    return await transaction(async (tx) => {
+    const updated = await transaction(async (tx) => {
       const current = await tx.all<{
-        list_id: string; list_name: string; customer_name: string; phone: string; work_order_number: string | null;
+        list_id: string; list_name: string; customer_name: string; phone: string; email: string; work_order_number: string | null;
         invoice_number: string | null; piece_index: number | null; piece_count: number | null; size: string;
         due_date: string | null; start_date: string | null; shared_mats: string; art_description: string;
         art_location: string; art_condition: string; connected_orders: string; additional_contact: string;
@@ -227,27 +246,37 @@ export async function updateWorkCard(id: string, input: CardInput, actor: Actor)
       const labels = await resolveLabels(tx, input.labelNames);
       const assignees = await resolveAssignees(tx, input.assigneeEmails);
       const fields = await resolveFields(tx, input.customFields);
-      const materials = input.replaceMaterials || input.materials ? normalizeMaterials(input.materials, false) : null;
+      const stems = await discontinuedStemSet();
+      const materials = input.replaceMaterials || input.materials ? normalizeMaterials(input.materials, false, stems) : null;
       const workOrder = input.workOrderNumber === undefined ? card.work_order_number : input.workOrderNumber?.trim() || null;
       const pieceIndex = workOrder ? input.pieceIndex || card.piece_index || 1 : null;
       const pieceCount = workOrder ? input.pieceCount || card.piece_count || 1 : null;
       const dueDate = input.dueDate === undefined ? card.due_date : input.dueDate || null;
+      const contact = contactFields(input, {
+        phone: card.phone,
+        email: card.email ?? "",
+        additional: card.additional_contact,
+      });
+      const size =
+        (input.dimensions && input.dimensions.trim()) || (input.size && input.size.trim())
+          ? resolveDimensions({ size: input.size, dimensions: input.dimensions })
+          : card.size || resolveDimensions({ artDescription: input.artDescription ?? card.art_description });
       reportedOrder = workOrder;
       reportedPiece = pieceIndex;
       if (movedFrom) await activity(tx, id, actor, "moved", `${actor.name} moved this from ${movedFrom} to ${listName}.`);
       await tx.run(
-        `update cards set list_id = ?, customer_name = ?, phone = ?, work_order_number = ?, invoice_number = ?,
+        `update cards set list_id = ?, customer_name = ?, phone = ?, email = ?, work_order_number = ?, invoice_number = ?,
          piece_index = ?, piece_count = ?, size = ?, due_date = ?, start_date = ?, shared_mats = ?, art_description = ?,
          art_location = ?, art_condition = ?, connected_orders = ?, additional_contact = ?, customer_record_id = ?, updated_at = ?
          where id = ?`,
         [
-          listId, input.customerName.trim(), input.phone ?? card.phone, workOrder,
+          listId, input.customerName.trim(), contact.phone, contact.email, workOrder,
           input.invoiceNumber === undefined ? card.invoice_number : input.invoiceNumber?.trim() || null,
-          pieceIndex, pieceCount, input.size ?? card.size, dueDate,
+          pieceIndex, pieceCount, size, dueDate,
           input.startDate === undefined ? card.start_date : input.startDate || null,
           input.sharedMats ?? card.shared_mats, input.artDescription ?? card.art_description,
           input.artLocation ?? card.art_location, input.artCondition ?? card.art_condition,
-          input.connectedOrders ?? card.connected_orders, input.additionalContact ?? card.additional_contact,
+          input.connectedOrders ?? card.connected_orders, contact.additional,
           input.customerRecordId === undefined ? card.customer_record_id : input.customerRecordId || null,
           new Date().toISOString(), id,
         ],
@@ -256,15 +285,17 @@ export async function updateWorkCard(id: string, input: CardInput, actor: Actor)
       const changes: string[] = [];
       if (input.customerName.trim() !== card.customer_name) changes.push("customer");
       if (dueDate !== card.due_date) changes.push("due date");
-      if ((input.size ?? card.size) !== card.size) changes.push("size");
+      if (size !== card.size) changes.push("size");
       if (input.artDescription !== undefined && input.artDescription !== card.art_description) changes.push("art description");
       if (input.artLocation !== undefined && input.artLocation !== card.art_location) changes.push("art location");
       if (input.materials) changes.push("materials");
       if (input.labelNames) changes.push("labels");
       if (input.customFields) changes.push("custom fields");
       if (changes.length) await activity(tx, id, actor, "updated", `${actor.name} updated ${changes.join(", ")}.`);
-      return { listName, pieceIndex };
+      return { listName, pieceIndex, materials };
     });
+    if (updated.materials) await rememberDiscontinued(updated.materials);
+    return { listName: updated.listName, pieceIndex: updated.pieceIndex };
   } catch (error) {
     if (isUnique(error)) throw new CardError(`Work order ${reportedOrder} piece ${reportedPiece} already exists.`);
     throw error;
@@ -333,20 +364,37 @@ export async function setArchived(id: string, archived: boolean, actor: Actor) {
 export async function setMaterialStatus(materialId: string, status: string, actor: Actor) {
   const parsed = parseStatus(status);
   if (!parsed) throw new CardError("Unknown stock status.");
+  const stems = await discontinuedStemSet();
   await transaction(async (tx) => {
     const line = await tx.all<{ card_id: string; item_code: string; kind: string; vendor: string; stock_status: string }>(
       "select card_id, item_code, kind, vendor, stock_status from material_lines where id = ?",
       [materialId],
     );
     if (!line[0]) throw new CardError("Material line not found.", 404);
-    if (line[0].stock_status === parsed) return;
-    await tx.run("update material_lines set stock_status = ? where id = ?", [parsed, materialId]);
+    const next = coerceStatus(line[0].kind, line[0].item_code, parsed, stems);
+    if (line[0].stock_status === next) return;
+    await tx.run("update material_lines set stock_status = ? where id = ?", [next, materialId]);
     await tx.run("update cards set updated_at = ? where id = ?", [new Date().toISOString(), line[0].card_id]);
-    await activity(tx, line[0].card_id, actor, "material_status", `${actor.name} set ${line[0].item_code} (${kindLabel(line[0].kind)}${line[0].vendor ? `, ${line[0].vendor}` : ""}) to ${statusLabel(parsed)}.`);
+    await activity(tx, line[0].card_id, actor, "material_status", `${actor.name} set ${line[0].item_code} (${kindLabel(line[0].kind)}${line[0].vendor ? `, ${line[0].vendor}` : ""}) to ${statusLabel(next)}.`);
   });
 }
 
-export async function setMaterialLines(cardId: string, updates: { kind: string; itemCode: string; stockStatus: string }[], actor: Actor) {
+function codesMatch(left: string, right: string): boolean {
+  if (left.trim().toLowerCase() === right.trim().toLowerCase()) return true;
+  const a = left.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const b = right.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const stem = (value: string) => (value.length > 1 && value.endsWith("D") ? value.slice(0, -1) : value);
+  return stem(a) === stem(b);
+}
+
+export async function setMaterialLines(
+  cardId: string,
+  updates: { kind: string; itemCode?: string; stockStatus: string; description?: string }[],
+  actor: Actor,
+) {
+  const stems = await discontinuedStemSet();
   await transaction(async (tx) => {
     const card = await tx.all<{ id: string }>("select id from cards where id = ?", [cardId]);
     if (!card[0]) throw new CardError("Card not found.", 404);
@@ -354,22 +402,39 @@ export async function setMaterialLines(cardId: string, updates: { kind: string; 
     for (const update of updates) {
       const kind = parseKind(update.kind);
       if (!kind) throw new CardError(`Unknown material kind "${update.kind}".`);
-      const status = parseStatus(update.stockStatus);
-      if (!status) throw new CardError(`Unknown stock status "${update.stockStatus}".`);
+      const parsedStatus = parseStatus(update.stockStatus);
+      if (!parsedStatus) throw new CardError(`Unknown stock status "${update.stockStatus}".`);
       const lines = await tx.all<{ id: string; stock_status: string; item_code: string; vendor: string }>(
-        "select id, stock_status, item_code, vendor from material_lines where card_id = ? and kind = ? and lower(item_code) = lower(?)",
-        [cardId, kind, update.itemCode],
+        "select id, stock_status, item_code, vendor from material_lines where card_id = ? and kind = ?",
+        [cardId, kind],
       );
-      if (!lines[0]) throw new CardError(`No ${kindLabel(kind)} line with item code ${update.itemCode} on this card.`, 404);
-      if (lines[0].stock_status === status) continue;
-      pending.push({
-        id: lines[0].id,
-        itemCode: lines[0].item_code,
-        vendor: lines[0].vendor,
-        kind,
-        status,
-        label: statusLabel(status),
-      });
+      const matches = update.itemCode ? lines.filter((line) => codesMatch(line.item_code, update.itemCode ?? "")) : lines;
+      if (!matches.length) {
+        throw new CardError(
+          update.itemCode
+            ? `No ${kindLabel(kind)} line with item code ${update.itemCode} on this card.`
+            : `No ${kindLabel(kind)} line on this card.`,
+          404,
+        );
+      }
+      if (!update.itemCode && matches.length > 1) {
+        throw new CardError(`Provide itemCode. This card has more than one ${kindLabel(kind)} line.`);
+      }
+      for (const line of update.itemCode ? [matches[0]] : matches) {
+        const lineStems = descriptionSaysDiscontinued(update.description)
+          ? new Set([...stems, ...discontinuedStems([line.item_code])])
+          : stems;
+        const status = coerceStatus(kind, line.item_code, parsedStatus, lineStems);
+        if (line.stock_status === status) continue;
+        pending.push({
+          id: line.id,
+          itemCode: line.item_code,
+          vendor: line.vendor,
+          kind,
+          status,
+          label: statusLabel(status),
+        });
+      }
     }
     for (const line of pending) {
       await tx.run("update material_lines set stock_status = ? where id = ?", [line.status, line.id]);
@@ -500,17 +565,22 @@ export async function addCheckItem(cardId: string, text: string, actor: Actor) {
       ]);
     } else {
       const checklistId = randomUUID();
-      await tx.run("insert into checklists (id, card_id, title, position) values (?, ?, ?, 0)", [checklistId, cardId, PRODUCTION_CHECKLIST.title]);
-      for (const [index, itemText] of PRODUCTION_CHECKLIST.items.entries()) {
-        await tx.run("insert into checklist_items (id, checklist_id, text, checked, position) values (?, ?, ?, 0, ?)", [
-          randomUUID(), checklistId, itemText, index,
-        ]);
-      }
+      await tx.run("insert into checklists (id, card_id, title, position) values (?, ?, ?, 0)", [checklistId, cardId, "Checklist"]);
       await tx.run("insert into checklist_items (id, checklist_id, text, checked, position) values (?, ?, ?, 0, ?)", [
-        randomUUID(), checklistId, body, PRODUCTION_CHECKLIST.items.length,
+        randomUUID(), checklistId, body, 0,
       ]);
     }
+    await tx.run("update cards set updated_at = ? where id = ?", [new Date().toISOString(), cardId]);
     await activity(tx, cardId, actor, "checklist", `${actor.name} added checklist item "${body}".`);
+  });
+}
+
+export async function saveWorkingNotes(cardId: string, body: string) {
+  await transaction(async (tx) => {
+    const card = await tx.all<{ working_notes: string }>("select working_notes from cards where id = ?", [cardId]);
+    if (!card[0]) throw new CardError("Card not found.", 404);
+    if (card[0].working_notes === body) return;
+    await tx.run("update cards set working_notes = ?, updated_at = ? where id = ?", [body, new Date().toISOString(), cardId]);
   });
 }
 
@@ -520,9 +590,11 @@ export async function addNote(cardId: string, body: string, actor: Actor) {
   await transaction(async (tx) => {
     const card = await tx.all<{ id: string }>("select id from cards where id = ?", [cardId]);
     if (!card[0]) throw new CardError("Card not found.", 404);
+    const now = new Date().toISOString();
     await tx.run("insert into notes (id, card_id, author_name, author_user_id, body, created_at) values (?, ?, ?, ?, ?, ?)", [
-      randomUUID(), cardId, actor.name, actor.userId, text, new Date().toISOString(),
+      randomUUID(), cardId, actor.name, actor.userId, text, now,
     ]);
+    await tx.run("update cards set updated_at = ? where id = ?", [now, cardId]);
     await activity(tx, cardId, actor, "note", `${actor.name} added a note.`);
   });
 }

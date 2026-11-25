@@ -1,9 +1,11 @@
 import { z } from "zod";
 import { BOT_NAME } from "./config";
 import { CardError, type CardInput } from "./board-types";
+import { listDiscontinued, reapplyDiscontinuedFlags, removeDiscontinued, replaceDiscontinued } from "./discontinued";
 import { D1_MAX_BOUND_PARAMETERS } from "./d1";
 import { all, transaction } from "./db";
 import { getCard, piecesForWorkOrder } from "./queries";
+import { applyStockCheck } from "./stock-sync";
 import { removeUpload } from "./storage";
 import { addNote, attachFile, createWorkCard, moveCard, setMaterialLines, updateWorkCard } from "./writes";
 
@@ -14,12 +16,14 @@ const materialSchema = z.object({
   itemCode: z.string().min(1),
   vendor: z.string().optional(),
   stockStatus: z.string().optional(),
+  description: z.string().optional(),
 });
 
 const pieceSchema = z.object({
   pieceIndex: z.number().int().positive().optional(),
   pieceCount: z.number().int().positive().optional(),
   size: z.string().optional(),
+  dimensions: z.string().optional(),
   dueDate: z.string().nullable().optional(),
   startDate: z.string().nullable().optional(),
   sharedMats: z.string().optional(),
@@ -40,11 +44,13 @@ const orderSchema = z.object({
   invoiceNumber: z.string().optional(),
   customerName: z.string().min(1),
   phone: z.string().optional(),
+  email: z.string().optional(),
   dueDate: z.string().nullable().optional(),
   startDate: z.string().nullable().optional(),
   list: z.string().optional(),
   forceList: z.boolean().optional(),
   size: z.string().optional(),
+  dimensions: z.string().optional(),
   pieceIndex: z.number().int().positive().optional(),
   pieceCount: z.number().int().positive().optional(),
   sharedMats: z.string().optional(),
@@ -71,6 +77,7 @@ function piecesOf(body: OrderBody) {
           pieceIndex: body.pieceIndex,
           pieceCount: body.pieceCount,
           size: body.size,
+          dimensions: body.dimensions,
           dueDate: body.dueDate,
           startDate: body.startDate,
           sharedMats: body.sharedMats,
@@ -89,7 +96,8 @@ function piecesOf(body: OrderBody) {
   return source.map((piece, index) => ({
     pieceIndex: piece.pieceIndex ?? index + 1,
     pieceCount: piece.pieceCount ?? source.length,
-    size: piece.size ?? "",
+    size: piece.size ?? body.size ?? "",
+    dimensions: piece.dimensions ?? body.dimensions,
     dueDate: piece.dueDate === undefined ? body.dueDate : piece.dueDate,
     startDate: piece.startDate === undefined ? body.startDate : piece.startDate,
     sharedMats: piece.sharedMats ?? body.sharedMats,
@@ -110,11 +118,13 @@ function toInput(body: OrderBody, piece: ReturnType<typeof piecesOf>[number], ex
   return {
     customerName: body.customerName,
     phone: body.phone,
+    email: body.email,
     workOrderNumber: body.workOrderNumber,
     invoiceNumber: body.invoiceNumber,
     pieceIndex: piece.pieceIndex,
     pieceCount: piece.pieceCount,
     size: piece.size,
+    dimensions: piece.dimensions,
     dueDate: piece.dueDate,
     startDate: piece.startDate,
     sharedMats: piece.sharedMats,
@@ -156,7 +166,24 @@ export async function upsertOrder(body: unknown) {
       results.push({ action: "created" as const, id: created.id, pieceIndex: piece.pieceIndex, list: created.listName, title: card?.title ?? "" });
     }
   }
-  return { workOrderNumber: data.workOrderNumber, results };
+  const linkedOrders = data.invoiceNumber
+    ? await all<{ id: string; work_order_number: string | null; piece_index: number | null }>(
+        `select id, work_order_number, piece_index from cards
+         where invoice_number = ? and work_order_number != ?
+         order by work_order_number, piece_index`,
+        [data.invoiceNumber, data.workOrderNumber],
+      )
+    : [];
+  return {
+    workOrderNumber: data.workOrderNumber,
+    invoiceNumber: data.invoiceNumber ?? null,
+    results,
+    linkedOrders: linkedOrders.map((row) => ({
+      id: row.id,
+      workOrderNumber: row.work_order_number,
+      pieceIndex: row.piece_index,
+    })),
+  };
 }
 
 export async function deleteOrder(workOrder: string) {
@@ -230,11 +257,21 @@ export async function noteOrder(workOrder: string, body: unknown) {
 export async function stockOrder(workOrder: string, body: unknown) {
   const parsed = z.object({
     pieceIndex: z.number().int().positive().optional(),
-    materials: z.array(z.object({ kind: z.string(), itemCode: z.string(), stockStatus: z.string() })).min(1),
+    materials: z.array(z.object({
+      kind: z.string(),
+      itemCode: z.string().optional(),
+      stockStatus: z.string(),
+      description: z.string().optional(),
+    })).min(1),
   }).safeParse(body);
-  if (!parsed.success) throw new CardError("Provide materials with kind, itemCode, and stockStatus.");
+  if (!parsed.success) throw new CardError("Provide materials with kind and stockStatus. Include itemCode when a card has more than one line of that kind.");
   const pieces = await targetPieces(workOrder, parsed.data.pieceIndex);
   for (const piece of pieces) await setMaterialLines(piece.id, parsed.data.materials, actor);
+  const described = parsed.data.materials.filter((line) => line.itemCode && line.description && /discontinued/i.test(line.description));
+  if (described.length) {
+    await replaceDiscontinued(described.map((line) => ({ code: line.itemCode ?? "", note: line.description })), "add");
+    await reapplyDiscontinuedFlags(actor);
+  }
   return { workOrderNumber: workOrder, updated: pieces.map((piece) => piece.piece_index) };
 }
 
@@ -243,6 +280,34 @@ export async function attachOrder(workOrder: string, pieceIndex: number | undefi
   if (pieces.length !== 1) throw new CardError("Provide pieceIndex when a work order has more than one piece.");
   await attachFile(pieces[0].id, file, actor);
   return { workOrderNumber: workOrder, pieceIndex: pieces[0].piece_index, filename: file.filename, cardId: pieces[0].id };
+}
+
+export async function readDiscontinuedMats() {
+  return { codes: await listDiscontinued() };
+}
+
+export async function writeDiscontinuedMats(body: unknown) {
+  const parsed = z.object({
+    codes: z.array(z.union([z.string(), z.object({ code: z.string(), note: z.string().optional() })])).min(1),
+    mode: z.enum(["add", "replace"]).optional(),
+  }).safeParse(body);
+  if (!parsed.success) throw new CardError("Provide codes, and optionally mode add or replace.");
+  const entries = parsed.data.codes.map((entry) => (typeof entry === "string" ? { code: entry } : entry));
+  const codes = await replaceDiscontinued(entries, parsed.data.mode ?? "add");
+  const updated = await reapplyDiscontinuedFlags(actor);
+  return { codes, updated };
+}
+
+export async function deleteDiscontinuedMats(body: unknown) {
+  const parsed = z.object({ codes: z.array(z.string()).min(1) }).safeParse(body);
+  if (!parsed.success) throw new CardError("Provide codes to remove.");
+  const codes = await removeDiscontinued(parsed.data.codes);
+  const updated = await reapplyDiscontinuedFlags(actor);
+  return { codes, updated };
+}
+
+export async function syncStock(body: unknown) {
+  return applyStockCheck(body, actor.name);
 }
 
 async function targetPieces(workOrder: string, pieceIndex?: number) {

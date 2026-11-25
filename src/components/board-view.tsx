@@ -1,12 +1,12 @@
 "use client";
 
 import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type RefObject } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   DndContext,
   DragOverlay,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCenter,
   closestCorners,
   pointerWithin,
@@ -18,17 +18,20 @@ import {
   type DragStartEvent,
 } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { Archive, FileText, Plus, Search } from "lucide-react";
+import { Archive, FileText, Lock, LockOpen, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
-import { archiveCard, createCard, saveOrder } from "@/app/actions";
+import { archiveCard, createCard, loadCard, moveCardTo, saveOrder } from "@/app/actions";
+import { CardDetailView } from "@/components/card-detail";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { statusShort } from "@/data/board-schema";
+import { TILE_MATERIALS, statusShort } from "@/data/board-schema";
+import { COMPLETED_LIST_NAME } from "@/lib/board-lists";
 import { applyOrder, indicatorIndex, openCards, orderAgrees, planCardMove, sameOrder, type MovePlan, type OrderGroup } from "@/lib/board-drag";
-import type { BoardCard, BoardData } from "@/lib/board-types";
+import type { BoardCard, BoardData, CardDetail } from "@/lib/board-types";
+import { urgentLine } from "@/lib/stock";
 import { formatShopDate, initials } from "@/lib/format";
 
 type Filters = {
@@ -115,8 +118,7 @@ function matches(card: BoardCard, filters: Filters, today: string) {
   if (filters.due === "overdue" && !card.overdue) return false;
   if (filters.due === "week" && !(card.dueDate && card.dueDate >= today && card.dueDate <= addDays(today, 7))) return false;
   if (filters.due === "none" && card.dueDate) return false;
-  if (filters.material === "needs_review" && !card.needsReview) return false;
-  if (filters.material && filters.material !== "needs_review" && !card.materials.some((line) => line.stockStatus === filters.material)) {
+  if (filters.material && !card.materials.some((line) => line.stockStatus === filters.material)) {
     return false;
   }
   return true;
@@ -129,7 +131,7 @@ function addDays(iso: string, days: number) {
   return date.toISOString().slice(0, 10);
 }
 
-export function BoardView({ data }: { data: BoardData }) {
+export function BoardView({ data, userId, initialCardId = null }: { data: BoardData; userId: string; initialCardId?: string | null }) {
   const router = useRouter();
   const [cards, setCards] = useState(data.cards);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
@@ -137,6 +139,13 @@ export function BoardView({ data }: { data: BoardData }) {
   const [preview, setPreview] = useState<DropPreview | null>(null);
   const [pending, startTransition] = useTransition();
   const [draftList, setDraftList] = useState<BoardData["lists"][number] | null>(null);
+  const [dragLocked, setDragLocked] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(`masten-drag-lock:${userId}`) === "1";
+  });
+  const [openCardId, setOpenCardId] = useState<string | null>(initialCardId);
+  const [openCard, setOpenCard] = useState<CardDetail | null>(null);
+  const revisionSeen = useRef(data.revision);
   const boardRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const suppressClick = useRef(false);
@@ -152,8 +161,63 @@ export function BoardView({ data }: { data: BoardData }) {
   }, [data.cards]);
   const filtered = filters.q || filters.label || filters.assignee || filters.due || filters.material || filters.archived;
   const visible = useMemo(() => cards.filter((card) => matches(card, filters, data.today)), [cards, filters, data.today]);
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 400, tolerance: 8 } }),
+  );
   const active = cards.find((card) => card.id === activeId) ?? null;
+
+  useEffect(() => {
+    if (!openCardId) return;
+    let cancel = false;
+    void loadCard(openCardId).then((card) => {
+      if (!cancel) setOpenCard(card);
+    });
+    return () => {
+      cancel = true;
+    };
+  }, [openCardId, data.revision]);
+
+  useEffect(() => {
+    revisionSeen.current = data.revision;
+  }, [data.revision]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (document.hidden || activeId || savesInFlight.current > 0) return;
+      void fetch("/api/board/revision", { cache: "no-store" })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((body: { revision?: string } | null) => {
+          if (!body?.revision || body.revision === revisionSeen.current) return;
+          revisionSeen.current = body.revision;
+          router.refresh();
+        })
+        .catch(() => undefined);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [activeId, router]);
+
+  function toggleDragLock() {
+    const next = !dragLocked;
+    setDragLocked(next);
+    window.localStorage.setItem(`masten-drag-lock:${userId}`, next ? "1" : "0");
+  }
+
+  function showCard(id: string) {
+    setOpenCardId(id);
+    setOpenCard((current) => (current?.id === id ? current : null));
+    const url = new URL(window.location.href);
+    url.searchParams.set("card", id);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+  }
+
+  function closeCard() {
+    setOpenCardId(null);
+    setOpenCard(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("card");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+  }
 
   useEffect(() => {
     const onPointerMove = (event: PointerEvent) => {
@@ -226,7 +290,16 @@ export function BoardView({ data }: { data: BoardData }) {
 
   return (
     <div className="flex h-full flex-col">
-      <FilterBar data={data} filters={filters} setFilters={setFilters} count={visible.length} total={cards.filter((card) => !card.archived).length} filtered={Boolean(filtered)} />
+      <FilterBar
+        data={data}
+        filters={filters}
+        setFilters={setFilters}
+        count={visible.length}
+        total={cards.filter((card) => !card.archived).length}
+        filtered={Boolean(filtered)}
+        dragLocked={dragLocked}
+        onToggleDragLock={toggleDragLock}
+      />
       <DndContext
         sensors={sensors}
         collisionDetection={collisionDetection}
@@ -255,9 +328,22 @@ export function BoardView({ data }: { data: BoardData }) {
                 cards={columnCards}
                 openCount={openCount}
                 archivedCount={archivedCount}
-                dragEnabled={!filtered}
+                dragEnabled={!filtered && !dragLocked}
                 dropIndex={preview?.listId === list.id ? preview.index : null}
                 suppressClick={suppressClick}
+                completedListId={data.lists.find((item) => item.name === COMPLETED_LIST_NAME)?.id ?? ""}
+                onOpen={showCard}
+                onComplete={(card) => {
+                  startTransition(async () => {
+                    const result = await moveCardTo(card.id, COMPLETED_LIST_NAME);
+                    if (!result.ok) toast.error(result.error);
+                    else {
+                      const listId = data.lists.find((item) => item.name === COMPLETED_LIST_NAME)?.id;
+                      if (listId) setCards((current) => current.map((item) => (item.id === card.id ? { ...item, listId } : item)));
+                    }
+                    router.refresh();
+                  });
+                }}
                 onAdd={() => setDraftList(list)}
                 onArchive={(card) => {
                   startTransition(async () => {
@@ -276,12 +362,24 @@ export function BoardView({ data }: { data: BoardData }) {
         </DragOverlay>
       </DndContext>
       {pending ? <p className="sr-only">Saving</p> : null}
+      <Dialog open={Boolean(openCardId)} onOpenChange={(open) => { if (!open) closeCard(); }}>
+        <DialogContent className="top-2 flex h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] w-[calc(100%-0.75rem)] max-w-5xl translate-y-0 flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
+          {openCard ? (
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <CardDetailView card={openCard} board={data} onOpenCard={showCard} />
+            </div>
+          ) : (
+            <p className="p-6 text-sm text-muted-foreground">Loading card…</p>
+          )}
+        </DialogContent>
+      </Dialog>
       <NewCardDialog
         list={draftList}
         onClose={() => setDraftList(null)}
         onCreated={(id) => {
           setDraftList(null);
-          router.push(`/cards/${id}`);
+          showCard(id);
+          router.refresh();
         }}
       />
     </div>
@@ -295,6 +393,8 @@ function FilterBar({
   count,
   total,
   filtered,
+  dragLocked,
+  onToggleDragLock,
 }: {
   data: BoardData;
   filters: Filters;
@@ -302,6 +402,8 @@ function FilterBar({
   count: number;
   total: number;
   filtered: boolean;
+  dragLocked: boolean;
+  onToggleDragLock: () => void;
 }) {
   return (
     <div className="shrink-0 border-b bg-[#f7f3ea] px-3 py-2 sm:px-4">
@@ -319,7 +421,11 @@ function FilterBar({
         <FilterSelect label="Label" value={filters.label} onChange={(label) => setFilters({ ...filters, label })} options={[{ value: "", label: "Any label" }, ...data.labels.map((label) => ({ value: label.id, label: label.name }))]} />
         <FilterSelect label="Assignee" value={filters.assignee} onChange={(assignee) => setFilters({ ...filters, assignee })} options={[{ value: "", label: "Anyone" }, { value: "none", label: "Unassigned" }, ...data.users.map((user) => ({ value: user.id, label: user.name }))]} />
         <FilterSelect label="Due" value={filters.due} onChange={(due) => setFilters({ ...filters, due })} options={[{ value: "", label: "Any due date" }, { value: "overdue", label: "Overdue" }, { value: "week", label: "Due in 7 days" }, { value: "none", label: "No due date" }]} />
-        <FilterSelect label="Materials" value={filters.material} onChange={(material) => setFilters({ ...filters, material })} options={[{ value: "", label: "Any material status" }, { value: "needs_review", label: "Needs review" }, { value: "not_in_stock", label: "Not in stock" }, { value: "ordered", label: "Ordered" }, { value: "needs_human_check", label: "Needs human check" }, { value: "in_stock", label: "In stock" }, { value: "here", label: "Here" }]} />
+        <FilterSelect label="Materials" value={filters.material} onChange={(material) => setFilters({ ...filters, material })} options={[{ value: "", label: "Any material status" }, { value: "not_in_stock", label: "To order" }, { value: "ordered", label: "On order" }, { value: "needs_human_check", label: "Pending" }, { value: "in_stock", label: "In stock" }, { value: "here", label: "Here" }, { value: "discontinued_attention", label: "Discontinued" }]} />
+        <Button type="button" variant={dragLocked ? "default" : "outline"} onClick={onToggleDragLock} aria-pressed={dragLocked}>
+          {dragLocked ? <Lock /> : <LockOpen />}
+          {dragLocked ? "Unlock dragging" : "Lock dragging"}
+        </Button>
         <Label className="flex min-h-10 items-center gap-2 rounded-lg border bg-card px-2.5 text-sm font-normal">
           <Switch checked={filters.archived} onCheckedChange={(archived) => setFilters({ ...filters, archived })} />
           Archived
@@ -331,7 +437,7 @@ function FilterBar({
         ) : null}
         <p className="ml-auto text-sm text-muted-foreground">
           {count} shown · {total} open
-          {filtered ? " · drag paused" : ""}
+          {filtered || dragLocked ? " · drag paused" : ""}
         </p>
       </div>
     </div>
@@ -396,6 +502,9 @@ function Column({
   dragEnabled,
   dropIndex,
   suppressClick,
+  completedListId,
+  onOpen,
+  onComplete,
   onAdd,
   onArchive,
 }: {
@@ -406,6 +515,9 @@ function Column({
   dragEnabled: boolean;
   dropIndex: number | null;
   suppressClick: RefObject<boolean>;
+  completedListId: string;
+  onOpen: (id: string) => void;
+  onComplete: (card: BoardCard) => void;
   onAdd: () => void;
   onArchive: (card: BoardCard) => void;
 }) {
@@ -429,12 +541,12 @@ function Column({
           <Plus />
         </Button>
       </header>
-      <div data-column-scroll="true" className="min-h-16 flex-1 space-y-2 overflow-y-auto px-2 pb-3">
+      <div data-column-scroll="true" className="min-h-16 flex-1 touch-pan-y space-y-2 overflow-y-auto overscroll-y-contain px-2 pb-3">
         <SortableContext items={cards.map((card) => card.id)} strategy={verticalListSortingStrategy}>
           {cards.map((card, index) => (
             <Fragment key={card.id}>
               {dropIndex === index ? <DropLine /> : null}
-              <SortableCard card={card} dragEnabled={dragEnabled} suppressClick={suppressClick} onArchive={onArchive} />
+              <SortableCard card={card} dragEnabled={dragEnabled} suppressClick={suppressClick} completed={card.listId === completedListId} onOpen={onOpen} onComplete={onComplete} onArchive={onArchive} />
             </Fragment>
           ))}
         </SortableContext>
@@ -453,14 +565,19 @@ function SortableCard({
   card,
   dragEnabled,
   suppressClick,
+  completed,
+  onOpen,
+  onComplete,
   onArchive,
 }: {
   card: BoardCard;
   dragEnabled: boolean;
   suppressClick: RefObject<boolean>;
+  completed: boolean;
+  onOpen: (id: string) => void;
+  onComplete: (card: BoardCard) => void;
   onArchive: (card: BoardCard) => void;
 }) {
-  const router = useRouter();
   const { attributes, listeners, setNodeRef, isDragging } = useSortable({
     id: card.id,
     disabled: !dragEnabled,
@@ -471,78 +588,105 @@ function SortableCard({
     <div
       ref={setNodeRef}
       data-card-id={card.id}
-      className={isDragging ? "pointer-events-none opacity-40" : dragEnabled ? "cursor-grab touch-none active:cursor-grabbing" : undefined}
+      className={isDragging ? "pointer-events-none opacity-40" : dragEnabled ? "cursor-grab active:cursor-grabbing" : undefined}
       {...attributes}
       {...(dragEnabled ? listeners : {})}
       onClick={(event) => {
         if (suppressClick.current) return;
         const target = event.target;
         if (!(target instanceof Element) || target.closest("a, button")) return;
-        router.push(`/cards/${card.id}`);
+        onOpen(card.id);
       }}
     >
-      <CardFace card={card} suppressClick={suppressClick} onArchive={() => onArchive(card)} />
+      <CardFace card={card} completed={completed} suppressClick={suppressClick} onOpen={() => onOpen(card.id)} onComplete={() => onComplete(card)} onArchive={() => onArchive(card)} />
     </div>
   );
 }
 
 function CardFace({
   card,
-  suppressClick,
+  completed = false,
+  onOpen,
+  onComplete,
   onArchive,
   overlay = false,
 }: {
   card: BoardCard;
+  completed?: boolean;
   suppressClick?: RefObject<boolean>;
+  onOpen?: () => void;
+  onComplete?: () => void;
   onArchive?: () => void;
   overlay?: boolean;
 }) {
-  const problems = summarize(card);
+  const created = card.createdAt ? formatShopDate(new Intl.DateTimeFormat("en-CA", { timeZone: "America/Denver" }).format(new Date(card.createdAt))) : "";
   return (
     <article
-      className={`rounded-lg border bg-card p-3 shadow-sm select-none ${overlay ? "w-[276px] rotate-1 shadow-2xl ring-2 ring-[#1c2b26]/20" : ""} ${card.needsReview ? "border-amber-500" : ""} ${card.archived ? "opacity-70" : ""}`}
+      className={`overflow-hidden rounded-lg border bg-card shadow-sm select-none ${overlay ? "w-[276px] rotate-1 shadow-2xl ring-2 ring-[#1c2b26]/20" : ""} ${card.archived ? "opacity-70" : ""}`}
     >
-      {card.needsReview ? <p className="mb-1 text-xs font-semibold text-amber-900">Needs review</p> : null}
-      {overlay ? (
-        <p className="text-left text-base leading-snug font-semibold">{card.title}</p>
-      ) : (
-        <Link
-          href={`/cards/${card.id}`}
-          draggable={false}
-          onClick={(event) => {
-            if (suppressClick?.current) {
-              event.preventDefault();
+      {card.coverAttachmentId && !overlay ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={`/api/attachments/${card.coverAttachmentId}`} alt="" className="h-16 w-full object-cover" />
+      ) : null}
+      <div className="p-2.5">
+      <div className="flex items-start gap-2">
+        {overlay ? null : (
+          <button
+            type="button"
+            aria-label={completed ? `${card.customerName} is in Completed` : `Move ${card.customerName} to Completed`}
+            aria-pressed={completed}
+            className={`mt-0.5 grid size-5 shrink-0 place-items-center rounded-full border-2 ${completed ? "border-emerald-700 bg-emerald-700 text-white" : "border-zinc-400 bg-white"}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
               event.stopPropagation();
-            }
-          }}
-          className="block text-left text-base leading-snug font-semibold"
-        >
-          {card.title}
-        </Link>
-      )}
+              if (!completed) onComplete?.();
+            }}
+          >
+            {completed ? <span className="text-[10px] leading-none">✓</span> : null}
+          </button>
+        )}
+        <div className="min-w-0 flex-1">
+          {overlay || !onOpen ? (
+            <p className="text-left text-sm leading-snug font-semibold">{card.customerName}</p>
+          ) : (
+            <button type="button" onClick={onOpen} className="block w-full text-left text-sm leading-snug font-semibold">
+              {card.customerName}
+            </button>
+          )}
+          <p className="truncate text-xs leading-snug text-zinc-600">{tileSubtitle(card)}</p>
+          {card.email ? <a href={`mailto:${card.email}`} className="block truncate text-xs text-sky-800 underline" onPointerDown={(event) => event.stopPropagation()}>{card.email}</a> : null}
+          {created ? <p className="text-[11px] leading-snug text-zinc-400">Added {created}</p> : null}
+        </div>
+      </div>
       {card.labels.length ? (
         <div className="mt-2 flex flex-wrap gap-1">
-          {card.labels.slice(0, 4).map((label) => (
-            <span key={label.id} className="rounded-full border px-2 py-0.5 text-xs font-medium" style={{ borderColor: label.color, backgroundColor: `${label.color}22` }}>
+          {card.labels.slice(0, 3).map((label) => (
+            <span key={label.id} className="rounded-full border px-2 py-0.5 text-[11px] font-medium" style={{ borderColor: label.color, backgroundColor: `${label.color}22` }}>
               {label.name}
             </span>
           ))}
         </div>
       ) : null}
+      <ul className="mt-2 grid grid-cols-1 gap-0.5">
+        {TILE_MATERIALS.map((item) => {
+          const line = urgentLine(card.materials, item.kind);
+          if (!line) return null;
+          return (
+            <li key={item.kind} className="flex items-baseline justify-between gap-2 text-[11px] leading-tight">
+              <span className="text-zinc-500">{item.label}</span>
+              <span className={`font-medium ${statusTone(line.stockStatus)}`}>{statusShort(line.stockStatus)}</span>
+            </li>
+          );
+        })}
+      </ul>
       <div className="mt-2 flex flex-wrap items-center gap-1">
         {card.dueDate ? (
-          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${card.overdue ? "bg-red-700 text-white" : "bg-amber-100 text-amber-950"}`}>
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${card.overdue ? "bg-red-700 text-white" : "bg-amber-100 text-amber-950"}`}>
             {card.overdue ? "Overdue" : "Due"} {formatShopDate(card.dueDate)}
           </span>
         ) : null}
-        {problems.map((problem) => (
-          <span key={problem} className={`rounded-full px-2 py-0.5 text-xs font-medium ${badgeClass(problem)}`}>
-            {problem}
-          </span>
-        ))}
-        {card.materials.length > 0 && problems.length === 0 && !card.needsReview ? <span className="text-xs font-medium text-emerald-800">In house</span> : null}
         {card.hasPdf ? (
-          <span title="Order PDF attached" className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-2 py-0.5 text-xs font-semibold text-white">
+          <span title="Order PDF attached" className="inline-flex items-center gap-1 rounded-full bg-zinc-900 px-2 py-0.5 text-[11px] font-semibold text-white">
             <FileText className="size-3" aria-hidden />
             PDF
           </span>
@@ -562,23 +706,30 @@ function CardFace({
           </button>
         ) : null}
       </div>
+      </div>
     </article>
   );
 }
 
-function summarize(card: BoardCard) {
-  const counts = new Map<string, number>();
-  for (const line of card.materials) {
-    if (line.stockStatus === "in_stock" || line.stockStatus === "here") continue;
-    counts.set(line.stockStatus, (counts.get(line.stockStatus) ?? 0) + 1);
-  }
-  return [...counts.entries()].slice(0, 3).map(([status, count]) => `${statusShort(status)}${count > 1 ? ` · ${count}` : ""}`);
+function tileSubtitle(card: BoardCard): string {
+  if (!card.workOrderNumber) return card.phone;
+  return [
+    `W.O. ${card.workOrderNumber}`,
+    card.invoiceNumber ? `Inv.# ${card.invoiceNumber}` : "",
+    card.pieceCount && card.pieceCount > 1 ? `(${card.pieceIndex || 1}/${card.pieceCount})` : "",
+    card.size,
+    card.phone,
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
-function badgeClass(text: string) {
-  if (text.startsWith("Not")) return "bg-red-100 text-red-900";
-  if (text.startsWith("Ordered")) return "bg-sky-100 text-sky-950";
-  return "bg-amber-100 text-amber-950";
+function statusTone(status: string) {
+  if (status === "in_stock" || status === "here") return "text-emerald-800";
+  if (status === "ordered") return "text-sky-800";
+  if (status === "not_in_stock") return "text-red-800";
+  if (status === "discontinued_attention") return "text-orange-800";
+  return "text-amber-900";
 }
 
 function NewCardDialog({ list, onClose, onCreated }: { list: BoardData["lists"][number] | null; onClose: () => void; onCreated: (id: string) => void }) {

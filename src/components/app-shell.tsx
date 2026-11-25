@@ -22,7 +22,7 @@ export function AppShell({
   children,
 }: {
   user: CurrentUser;
-  active: "board" | "order" | "card" | "users" | "account";
+  active: "board" | "order" | "card" | "users" | "account" | "discontinued";
   children: React.ReactNode;
 }) {
   return (
@@ -42,6 +42,11 @@ export function AppShell({
           {user.role === "admin" ? (
             <NavLink href="/users" active={active === "users"}>
               Users
+            </NavLink>
+          ) : null}
+          {user.role === "admin" ? (
+            <NavLink href="/discontinued" active={active === "discontinued"}>
+              Discontinued
             </NavLink>
           ) : null}
           <NavLink href="/account" active={active === "account"}>

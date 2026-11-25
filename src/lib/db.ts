@@ -214,6 +214,7 @@ CREATE TABLE IF NOT EXISTS cards (
   archived INTEGER NOT NULL DEFAULT 0,
   customer_name TEXT NOT NULL,
   phone TEXT NOT NULL DEFAULT '',
+  email TEXT NOT NULL DEFAULT '',
   work_order_number TEXT,
   invoice_number TEXT,
   piece_index INTEGER,
@@ -227,6 +228,7 @@ CREATE TABLE IF NOT EXISTS cards (
   art_condition TEXT NOT NULL DEFAULT '',
   connected_orders TEXT NOT NULL DEFAULT '',
   additional_contact TEXT NOT NULL DEFAULT '',
+  working_notes TEXT NOT NULL DEFAULT '',
   customer_record_id TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
@@ -299,6 +301,7 @@ CREATE TABLE IF NOT EXISTS activity (
   summary TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS cards_invoice ON cards(invoice_number);
 CREATE INDEX IF NOT EXISTS cards_list ON cards(list_id, position);
 CREATE INDEX IF NOT EXISTS materials_card ON material_lines(card_id, position);
 CREATE INDEX IF NOT EXISTS materials_status ON material_lines(stock_status);
@@ -310,8 +313,35 @@ export function migrationStatements(): string[] {
   return splitSqlScript(SCHEMA);
 }
 
+const DISCONTINUED = `
+CREATE TABLE IF NOT EXISTS discontinued_mats (
+  code TEXT PRIMARY KEY,
+  raw_code TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+`;
+
+async function addColumnIfMissing(table: string, column: string, definition: string): Promise<void> {
+  try {
+    const columns = await all<{ name: string }>(`pragma table_info(${table})`);
+    if (columns.some((item) => String(item.name) === column)) return;
+  } catch {
+    // Fall through and try the alter. A duplicate-column error means it already exists.
+  }
+  try {
+    await run(`alter table ${table} add column ${definition}`);
+  } catch (error) {
+    if (String(error).toLowerCase().includes("duplicate column")) return;
+    throw error;
+  }
+}
+
 export async function migrate(): Promise<void> {
   await execScript(SCHEMA);
+  await execScript(DISCONTINUED);
+  await addColumnIfMissing("cards", "email", "email TEXT NOT NULL DEFAULT ''");
+  await addColumnIfMissing("cards", "working_notes", "working_notes TEXT NOT NULL DEFAULT ''");
 }
 
 export function ensureReady(task: () => Promise<void>): Promise<void> {

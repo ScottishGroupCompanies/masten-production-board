@@ -7,6 +7,6 @@ const BoardView = dynamic(() => import("@/components/board-view").then((mod) => 
   ssr: false,
 });
 
-export function BoardClient({ data }: { data: BoardData }) {
-  return <BoardView data={data} />;
+export function BoardClient({ data, userId, initialCardId = null }: { data: BoardData; userId: string; initialCardId?: string | null }) {
+  return <BoardView data={data} userId={userId} initialCardId={initialCardId} />;
 }
